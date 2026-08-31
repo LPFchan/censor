@@ -283,6 +283,7 @@ canvas.addEventListener('pointerdown', (e) => {
   pointers.set(e.pointerId, p);
 
   if (pointers.size === 2) {
+    cancelDraw(); // abandon any one-finger draw first
     const [a, b] = [...pointers.values()];
     gesture = {
       type: 'pinch',
@@ -291,7 +292,6 @@ canvas.addEventListener('pointerdown', (e) => {
       scale0: state.view.scale,
       ox0: state.view.ox, oy0: state.view.oy,
     };
-    cancelDraw();
     return;
   }
 
@@ -630,6 +630,16 @@ function setStatus(t) { $('status').textContent = t; }
 
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// kill double-tap-to-zoom on UI chrome (iOS ignores user-scalable=no):
+// swallow the second tap of any rapid pair outside the canvas
+let lastUiTap = 0;
+document.addEventListener('touchend', (e) => {
+  if (e.target.closest('#view')) { lastUiTap = 0; return; }
+  const now = Date.now();
+  if (now - lastUiTap < 350) e.preventDefault();
+  lastUiTap = now;
+}, { passive: false });
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
