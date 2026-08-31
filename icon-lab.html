@@ -29,19 +29,19 @@
 <h1>censor icon lab — tweak, then download + replace files in icons/</h1>
 <div class="layout">
   <div class="controls">
-    <label>pixel block</label><input id="block" type="range" min="4" max="64" step="1" value="21"><output id="block-o"></output>
+    <label>pixel block</label><input id="block" type="range" min="4" max="64" step="1" value="14"><output id="block-o"></output>
     <label>split %</label><input id="split" type="range" min="0" max="100" step="1" value="50"><output id="split-o"></output>
-    <label>letter size %</label><input id="lsize" type="range" min="5" max="200" step="1" value="66"><output id="lsize-o"></output>
-    <label>letter x</label><input id="xoff" type="range" min="-128" max="128" step="1" value="0"><output id="xoff-o"></output>
+    <label>letter size %</label><input id="lsize" type="range" min="5" max="200" step="1" value="97"><output id="lsize-o"></output>
+    <label>letter x</label><input id="xoff" type="range" min="-128" max="128" step="1" value="13"><output id="xoff-o"></output>
     <label>letter y</label><input id="yoff" type="range" min="-128" max="128" step="1" value="0"><output id="yoff-o"></output>
     <label>letter</label><input id="char" type="text" value="A" maxlength="2"><span></span>
     <label>font</label><input id="font" type="text" value="'Times New Roman', 'Liberation Serif', serif"><span></span>
     <label>bold</label><input id="bold" type="checkbox"><span></span>
-    <label>checker cell</label><input id="cell" type="range" min="16" max="256" step="8" value="64"><output id="cell-o"></output>
-    <label>color 1</label><input id="c1" type="color" value="#23232b"><span></span>
-    <label>color 2</label><input id="c2" type="color" value="#3a3a46"><span></span>
-    <label>letter color</label><input id="c3" type="color" value="#ffffff"><span></span>
-    <label>drop shadow</label><input id="shadow" type="checkbox"><span></span>
+    <label>checker cell</label><input id="cell" type="range" min="16" max="256" step="8" value="128"><output id="cell-o"></output>
+    <label>color 1</label><input id="c1" type="color" value="#bcbcbc"><span></span>
+    <label>color 2</label><input id="c2" type="color" value="#e7e7e7"><span></span>
+    <label>letter color</label><input id="c3" type="color" value="#000000"><span></span>
+    <label>drop shadow</label><input id="shadow" type="checkbox" checked><span></span>
     <label>shadow blur</label><input id="sblur" type="range" min="0" max="64" step="1" value="12"><output id="sblur-o"></output>
     <label>shadow x</label><input id="sx" type="range" min="-32" max="32" step="1" value="0"><output id="sx-o"></output>
     <label>shadow y</label><input id="sy" type="range" min="-32" max="32" step="1" value="6"><output id="sy-o"></output>
@@ -64,14 +64,12 @@
   </div>
 </div>
 <div class="downloads">
-  <button data-dl="icon-512.png,512,1">icon-512.png</button>
-  <button data-dl="icon-192.png,192,1">icon-192.png</button>
-  <button data-dl="icon-180.png,180,1">icon-180.png</button>
-  <button data-dl="icon-maskable-512.png,512,0">icon-maskable-512.png</button>
-  <button data-dl="icon.svg,512,1">icon.svg</button>
+  <button id="savezip">save zip (to server ~/Downloads)</button>
+  <button id="apply">apply to server (overwrite icons/)</button>
   <button id="copyparams">copy params</button>
   <input id="parambox" type="text" placeholder="paste params JSON, press enter" style="width:280px">
 </div>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const ids = ['block','split','lsize','xoff','yoff','char','font','bold','cell','c1','c2','c3','shadow','sblur','sx','sy','salpha','scolor','radius'];
@@ -142,21 +140,47 @@ function render(ctx, size, rounded) {
   ctx.drawImage(letterCv, 0, 0);
 }
 
+// master canvases, rendered once at 512 — every smaller size is a downscale of these
+const masterRounded = document.createElement('canvas');
+masterRounded.width = masterRounded.height = 512;
+const masterMaskable = document.createElement('canvas');
+masterMaskable.width = masterMaskable.height = 512;
+
+function applyRound(ctx, size) {
+  if (+opts.radius <= 0) return;
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, size, size, +opts.radius * size / 512);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+}
+
 function renderIcon(cv, size, rounded) {
   const ctx = cv.getContext('2d');
   ctx.clearRect(0, 0, size, size);
-  render(ctx, size, rounded);
-  if (rounded && +opts.radius > 0) {
-    ctx.globalCompositeOperation = 'destination-in';
-    ctx.beginPath();
-    ctx.roundRect(0, 0, size, size, +opts.radius * size / 512);
-    ctx.fill();
-    ctx.globalCompositeOperation = 'source-over';
+  if (size === 512) {
+    render(ctx, 512, rounded);
+    if (rounded) applyRound(ctx, 512);
+  } else {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(rounded ? masterRounded : masterMaskable, 0, 0, size, size);
   }
+}
+
+function renderMasters() {
+  let ctx = masterRounded.getContext('2d');
+  ctx.clearRect(0, 0, 512, 512);
+  render(ctx, 512, true);
+  applyRound(ctx, 512);
+  ctx = masterMaskable.getContext('2d');
+  ctx.clearRect(0, 0, 512, 512);
+  render(ctx, 512, false);
 }
 
 function update() {
   readOpts();
+  renderMasters();
   renderIcon($('pv512'), 512, true);
   renderIcon($('pv192'), 192, true);
   renderIcon($('pv180'), 180, true);
@@ -166,26 +190,45 @@ function update() {
   renderIcon($('pvmask'), 512, false);
 }
 
-function download(name, size, rounded) {
+function iconCanvas(size, rounded) {
   const cv = document.createElement('canvas');
   cv.width = cv.height = size;
-  renderIcon(cv, size, !!rounded);
-  let url;
-  if (name.endsWith('.svg')) {
-    const b64 = cv.toDataURL('image/png').split(',')[1];
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512">\n'
-      + '  <image width="512" height="512" xlink:href="data:image/png;base64,' + b64 + '"/>\n</svg>\n';
-    url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
-  } else {
-    url = cv.toDataURL('image/png');
-  }
-  const a = document.createElement('a');
-  a.href = url; a.download = name; a.click();
-  if (url.startsWith('blob:')) setTimeout(() => URL.revokeObjectURL(url), 5000);
+  renderIcon(cv, size, rounded);
+  return cv;
 }
 
-document.querySelectorAll('[data-dl]').forEach(b =>
-  b.addEventListener('click', () => { const [n, s, r] = b.dataset.dl.split(','); download(n, +s, +r); }));
+function buildFiles() {
+  const png = (size, rounded) => iconCanvas(size, rounded).toDataURL('image/png').split(',')[1];
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512">\n'
+    + '  <image width="512" height="512" xlink:href="data:image/png;base64,' + masterRounded.toDataURL('image/png').split(',')[1] + '"/>\n</svg>\n';
+  return {
+    'icon-512.png': png(512, true),
+    'icon-192.png': png(192, true),
+    'icon-180.png': png(180, true),
+    'icon-maskable-512.png': png(512, false),
+    'icon.svg': btoa(svg),
+  };
+}
+
+$('savezip').addEventListener('click', async () => {
+  const zip = new JSZip();
+  for (const [name, b64] of Object.entries(buildFiles())) zip.file(name, b64, { base64: true });
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const res = await fetch('/save-zip', { method: 'POST', body: blob });
+  $('savezip').textContent = res.ok ? 'saved to server!' : 'save failed: ' + res.status;
+  setTimeout(() => $('savezip').textContent = 'save zip (to server ~/Downloads)', 2000);
+});
+
+$('apply').addEventListener('click', async () => {
+  if (!confirm('overwrite the live files in icons/ on the server?')) return;
+  const res = await fetch('/save-icons', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildFiles()),
+  });
+  $('apply').textContent = res.ok ? 'applied!' : 'failed: ' + res.status;
+  setTimeout(() => $('apply').textContent = 'apply to server (overwrite icons/)', 2000);
+});
 $('copyparams').addEventListener('click', async () => {
   readOpts();
   const json = JSON.stringify(opts);
