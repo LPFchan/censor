@@ -32,6 +32,8 @@
     <label>pixel block</label><input id="block" type="range" min="4" max="64" step="1" value="21"><output id="block-o"></output>
     <label>split %</label><input id="split" type="range" min="0" max="100" step="1" value="50"><output id="split-o"></output>
     <label>letter size %</label><input id="lsize" type="range" min="30" max="95" step="1" value="66"><output id="lsize-o"></output>
+    <label>letter x</label><input id="xoff" type="range" min="-128" max="128" step="1" value="0"><output id="xoff-o"></output>
+    <label>letter y</label><input id="yoff" type="range" min="-128" max="128" step="1" value="0"><output id="yoff-o"></output>
     <label>letter</label><input id="char" type="text" value="A" maxlength="2"><span></span>
     <label>font</label><input id="font" type="text" value="'Times New Roman', 'Liberation Serif', serif"><span></span>
     <label>bold</label><input id="bold" type="checkbox"><span></span>
@@ -61,10 +63,12 @@
   <button data-dl="icon-180.png,180,1">icon-180.png</button>
   <button data-dl="icon-maskable-512.png,512,0">icon-maskable-512.png</button>
   <button data-dl="icon.svg,512,1">icon.svg</button>
+  <button id="copyparams">copy params</button>
+  <input id="parambox" type="text" placeholder="paste params JSON, press enter" style="width:280px">
 </div>
 <script>
 const $ = id => document.getElementById(id);
-const ids = ['block','split','lsize','char','font','bold','cell','c1','c2','c3','radius'];
+const ids = ['block','split','lsize','xoff','yoff','char','font','bold','cell','c1','c2','c3','radius'];
 const opts = {};
 function readOpts() {
   for (const id of ids) {
@@ -74,6 +78,8 @@ function readOpts() {
   $('block-o').textContent = opts.block + 'px';
   $('split-o').textContent = opts.split + '%';
   $('lsize-o').textContent = opts.lsize + '%';
+  $('xoff-o').textContent = opts.xoff + 'px';
+  $('yoff-o').textContent = opts.yoff + 'px';
   $('cell-o').textContent = opts.cell + 'px';
   $('radius-o').textContent = opts.radius + 'px';
 }
@@ -97,7 +103,7 @@ function render(ctx, size, rounded) {
   l.font = (opts.bold ? 'bold ' : '') + px + 'px ' + opts.font;
   l.textAlign = 'center';
   l.textBaseline = 'middle';
-  l.fillText(opts.char || 'A', size / 2, size / 2 + size * 0.03);
+  l.fillText(opts.char || 'A', size / 2 + s(+opts.xoff), size / 2 + size * 0.03 + s(+opts.yoff));
   const cutX = Math.round(size * +opts.split / 100);
   const rw = size - cutX;
   if (rw > 0 && +opts.block > 1) {
@@ -160,10 +166,35 @@ function download(name, size, rounded) {
 
 document.querySelectorAll('[data-dl]').forEach(b =>
   b.addEventListener('click', () => { const [n, s, r] = b.dataset.dl.split(','); download(n, +s, +r); }));
+$('copyparams').addEventListener('click', async () => {
+  readOpts();
+  const json = JSON.stringify(opts);
+  $('parambox').value = json;
+  try {
+    await navigator.clipboard.writeText(json);
+    $('copyparams').textContent = 'copied!';
+    setTimeout(() => $('copyparams').textContent = 'copy params', 1200);
+  } catch (e) {
+    $('parambox').select();
+  }
+});
+$('parambox').addEventListener('change', () => {
+  try {
+    const p = JSON.parse($('parambox').value);
+    for (const id of ids) {
+      if (p[id] === undefined) continue;
+      const el = $(id);
+      if (el.type === 'checkbox') el.checked = !!p[id];
+      else el.value = p[id];
+    }
+    update();
+  } catch (e) {
+    $('parambox').value = 'bad json';
+  }
+});
 ids.forEach(id => $(id).addEventListener('input', update));
 document.fonts.ready.then(update);
 update();
 </script>
 </body>
 </html>
-
