@@ -1,0 +1,37 @@
+# censor
+
+A mobile-first PWA that censors photos with **blur** and **mosaic** — all
+nondestructive, all on-device. No uploads, no server, no accounts.
+
+**live: https://censor.lost.plus**
+
+## features
+
+- **box tool** — drag to draw a rectangular censor region
+- **freehand tool** — scribble to censor arbitrary shapes (adjustable brush size)
+- every censor is an **object**: tap it in move mode to select, drag to
+  reposition, adjust its effect (mosaic / blur) and strength, or delete it
+- strength is **per object**: mosaic = number of blocks across the image,
+  blur = radius in pixels
+- pinch to zoom, two-finger / move-mode drag to pan
+- **save** renders the full-resolution result to a PNG (original stays untouched)
+- installable (Add to Home Screen), works offline after first visit
+
+## privacy
+
+Images never leave the device. The whole app is static files; editing happens
+entirely in canvas.
+
+## develop
+
+It's just static files — serve the directory over HTTP:
+
+```sh
+python3 -m http.server 8600
+```
+
+## deploy
+
+Hosted behind a Cloudflare Tunnel (`censor.lost.plus` → the server's
+`localhost:8600`). Bump `CACHE` in `sw.js` when shipping changes so
+installed copies pick up the update.

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#141417">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="censor">
+<title>censor — blur &amp; mosaic editor</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<section id="landing">
+  <div class="landing-inner">
+    <div class="mark"></div>
+    <h1>censor</h1>
+    <p>blur &amp; pixelate parts of a photo.<br>everything stays on your device.</p>
+    <label class="open-btn">
+      open an image
+      <input type="file" id="file" accept="image/*">
+    </label>
+    <p class="tiny">draw boxes or scribble freely · adjust strength per object · drag to reposition</p>
+  </div>
+</section>
+
+<main id="editor">
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="hint">drag to draw a censor box</div>
+    <div id="status"></div>
+  </div>
+
+  <div id="selbar" class="bar">
+    <div class="row">
+      <div class="seg">
+        <button data-effect="mosaic">mosaic</button>
+        <button data-effect="blur">blur</button>
+      </div>
+      <span class="spacer"></span>
+      <button id="selDelete" class="danger" title="delete object">✕</button>
+      <button id="selDone" class="primary" title="done">✓</button>
+    </div>
+    <div class="row slider-row">
+      <input type="range" id="selIntensity" min="4" max="64" value="16">
+      <span id="selIntVal" class="val">16 blocks</span>
+    </div>
+  </div>
+
+  <div id="newbar" class="bar show">
+    <div class="row">
+      <div class="seg">
+        <button data-effect="mosaic" class="on">mosaic</button>
+        <button data-effect="blur">blur</button>
+      </div>
+      <input type="range" id="newIntensity" min="4" max="64" value="16">
+      <span id="newIntVal" class="val">16 blocks</span>
+    </div>
+    <div class="row slider-row" id="brushRow">
+      <span class="lbl">brush</span>
+      <input type="range" id="brushSize" min="8" max="200" value="48">
+      <span id="brushVal" class="val">48px</span>
+    </div>
+  </div>
+
+  <nav id="toolbar">
+    <button data-tool="rect" class="on" title="box">
+      <svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3"/></svg>
+    </button>
+    <button data-tool="pen" title="freehand">
+      <svg viewBox="0 0 24 24"><path d="M4 18 C 8 8, 12 20, 16 10 S 20 6, 20 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+    </button>
+    <button data-tool="move" title="pan / move objects">
+      <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+    <span class="divider"></span>
+    <button id="btnFit" title="fit to screen">
+      <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button id="btnClear" title="clear all">
+      <svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M8 7l1 13h6l1-13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button id="btnNew" title="new image">
+      <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8.5v7M8.5 12h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+    <span class="divider"></span>
+    <button id="btnSave" class="save" title="save image">
+      <svg viewBox="0 0 24 24"><path d="M12 4v11M12 15l-4-4M12 15l4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </nav>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
