@@ -41,6 +41,12 @@
     <label>color 1</label><input id="c1" type="color" value="#23232b"><span></span>
     <label>color 2</label><input id="c2" type="color" value="#3a3a46"><span></span>
     <label>letter color</label><input id="c3" type="color" value="#ffffff"><span></span>
+    <label>drop shadow</label><input id="shadow" type="checkbox"><span></span>
+    <label>shadow blur</label><input id="sblur" type="range" min="0" max="64" step="1" value="12"><output id="sblur-o"></output>
+    <label>shadow x</label><input id="sx" type="range" min="-32" max="32" step="1" value="0"><output id="sx-o"></output>
+    <label>shadow y</label><input id="sy" type="range" min="-32" max="32" step="1" value="6"><output id="sy-o"></output>
+    <label>shadow alpha</label><input id="salpha" type="range" min="0" max="100" step="1" value="60"><output id="salpha-o"></output>
+    <label>shadow color</label><input id="scolor" type="color" value="#000000"><span></span>
     <label>corner radius</label><input id="radius" type="range" min="0" max="256" step="4" value="112"><output id="radius-o"></output>
   </div>
   <div class="previews">
@@ -68,7 +74,7 @@
 </div>
 <script>
 const $ = id => document.getElementById(id);
-const ids = ['block','split','lsize','xoff','yoff','char','font','bold','cell','c1','c2','c3','radius'];
+const ids = ['block','split','lsize','xoff','yoff','char','font','bold','cell','c1','c2','c3','shadow','sblur','sx','sy','salpha','scolor','radius'];
 const opts = {};
 function readOpts() {
   for (const id of ids) {
@@ -82,6 +88,10 @@ function readOpts() {
   $('yoff-o').textContent = opts.yoff + 'px';
   $('cell-o').textContent = opts.cell + 'px';
   $('radius-o').textContent = opts.radius + 'px';
+  $('sblur-o').textContent = opts.sblur + 'px';
+  $('sx-o').textContent = opts.sx + 'px';
+  $('sy-o').textContent = opts.sy + 'px';
+  $('salpha-o').textContent = opts.salpha + '%';
 }
 const letterCv = document.createElement('canvas');
 const tinyCv = document.createElement('canvas');
@@ -103,7 +113,17 @@ function render(ctx, size, rounded) {
   l.font = (opts.bold ? 'bold ' : '') + px + 'px ' + opts.font;
   l.textAlign = 'center';
   l.textBaseline = 'middle';
+  if (opts.shadow) {
+    l.shadowColor = opts.scolor + Math.round(+opts.salpha * 255 / 100).toString(16).padStart(2, '0');
+    l.shadowBlur = s(+opts.sblur);
+    l.shadowOffsetX = s(+opts.sx);
+    l.shadowOffsetY = s(+opts.sy);
+  }
   l.fillText(opts.char || 'A', size / 2 + s(+opts.xoff), size / 2 + size * 0.03 + s(+opts.yoff));
+  l.shadowColor = 'transparent';
+  l.shadowBlur = 0;
+  l.shadowOffsetX = 0;
+  l.shadowOffsetY = 0;
   const cutX = Math.round(size * +opts.split / 100);
   const rw = size - cutX;
   if (rw > 0 && +opts.block > 1) {
