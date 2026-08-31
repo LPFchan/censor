@@ -31,8 +31,6 @@
 <main id="editor">
   <div id="stage">
     <canvas id="view"></canvas>
-    <div id="hint">drag to draw a censor box</div>
-    <div id="status"></div>
   </div>
 
   <div id="selbar" class="bar">
@@ -76,6 +74,13 @@
     </button>
     <button data-tool="move" title="pan / move objects">
       <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+    <span class="divider"></span>
+    <button id="btnUndo" title="undo" disabled>
+      <svg viewBox="0 0 24 24"><path d="M9 7 4 12l5 5M5 12h8a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button id="btnRedo" title="redo" disabled>
+      <svg viewBox="0 0 24 24"><path d="m15 7 5 5-5 5M19 12h-8a6 6 0 0 0-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <span class="divider"></span>
     <button id="btnFit" title="fit to screen">

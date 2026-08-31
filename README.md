@@ -10,7 +10,10 @@ nondestructive, all on-device. No uploads, no server, no accounts.
 - **box tool** — drag to draw a rectangular censor region
 - **freehand tool** — scribble to censor arbitrary shapes (adjustable brush size)
 - every censor is an **object**: tap it in move mode to select, drag to
-  reposition, adjust its effect (mosaic / blur) and strength, or delete it
+  reposition, resize boxes from their corner handles, adjust its effect
+  (mosaic / blur) and strength, or delete it
+- creating a box or freehand censor returns to move mode automatically
+- undo and redo controls cover edits to censor objects
 - strength is **per object**: mosaic = number of blocks across the image,
   blur = radius in pixels
 - pinch to zoom, two-finger / move-mode drag to pan

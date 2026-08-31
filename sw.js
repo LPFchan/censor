@@ -1,4 +1,4 @@
-const CACHE = 'censor-v2';
+const CACHE = 'censor-v3';
 const ASSETS = [
   './',
   './index.html',

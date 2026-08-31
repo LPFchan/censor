@@ -45,10 +45,10 @@ $('file').addEventListener('change', async (e) => {
     fxChain = null;
     document.body.classList.add('editing');
     fitView();
-    setStatus(w + '\u00d7' + h);
+    resetHistory();
     requestRender();
   } catch (err) {
-    setStatus('could not open that image');
+    alert('Could not open that image.');
   }
   e.target.value = '';
 });
@@ -270,6 +270,40 @@ function drawSelection(c, obj) {
 
 const pointers = new Map();
 let gesture = null;
+let history = [];
+let historyIndex = -1;
+
+function historySnapshot() {
+  return JSON.stringify(state.objects);
+}
+
+function resetHistory() {
+  history = [historySnapshot()];
+  historyIndex = 0;
+  syncHistoryUI();
+}
+
+function commitHistory() {
+  const snapshot = historySnapshot();
+  if (snapshot === history[historyIndex]) return;
+  history = history.slice(0, historyIndex + 1);
+  history.push(snapshot);
+  historyIndex++;
+  syncHistoryUI();
+}
+
+function restoreHistory(index) {
+  if (index < 0 || index >= history.length) return;
+  historyIndex = index;
+  state.objects = JSON.parse(history[historyIndex]);
+  selectObject(null);
+  syncHistoryUI();
+}
+
+function syncHistoryUI() {
+  $('btnUndo').disabled = historyIndex <= 0;
+  $('btnRedo').disabled = historyIndex < 0 || historyIndex >= history.length - 1;
+}
 
 function eventPos(e) {
   const r = canvas.getBoundingClientRect();
@@ -296,6 +330,13 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 
   const ip = toImage(p);
+  const handle = hitResizeHandle(ip);
+  if (handle) {
+    const obj = state.objects.find(o => o.id === state.selected);
+    gesture = { type: 'resize', id: obj.id, corner: handle, original: { ...obj.rect } };
+    return;
+  }
+
   if (state.tool === 'move' || state.space) {
     const hit = state.tool === 'move' && !state.space ? hitObject(ip) : null;
     if (hit) {
@@ -358,6 +399,13 @@ canvas.addEventListener('pointermove', (e) => {
       requestRender();
       break;
     }
+    case 'resize': {
+      const obj = state.objects.find(o => o.id === gesture.id);
+      if (!obj) break;
+      resizeRect(obj, gesture.original, gesture.corner, ip);
+      requestRender();
+      break;
+    }
     case 'draw-rect':
       gesture.cur = ip;
       previewRect(gesture.start, gesture.cur);
@@ -388,8 +436,15 @@ function endPointer(e) {
       const obj = { id: uid(), kind: 'rect', effect: state.mode, intensity: state.intensity, rect: r };
       state.objects.push(obj);
       selectObject(obj.id);
+      commitHistory();
+      setTool('move');
     }
     render();
+  } else if (gesture.type === 'draw-stroke') {
+    commitHistory();
+    setTool('move');
+  } else if (gesture.type === 'drag' || gesture.type === 'resize') {
+    commitHistory();
   }
   gesture = null;
 }
@@ -438,6 +493,45 @@ function hitObject(ip) {
   return null;
 }
 
+function hitResizeHandle(ip) {
+  const obj = state.objects.find(o => o.id === state.selected);
+  if (!obj || obj.kind !== 'rect') return null;
+  const threshold = 18 / state.view.scale;
+  const corners = {
+    nw: [obj.rect.x, obj.rect.y],
+    ne: [obj.rect.x + obj.rect.w, obj.rect.y],
+    sw: [obj.rect.x, obj.rect.y + obj.rect.h],
+    se: [obj.rect.x + obj.rect.w, obj.rect.y + obj.rect.h],
+  };
+  for (const [corner, [x, y]] of Object.entries(corners)) {
+    if (Math.hypot(ip.x - x, ip.y - y) <= threshold) return corner;
+  }
+  return null;
+}
+
+function resizeRect(obj, original, corner, ip) {
+  const minSize = 4;
+  const left = original.x, top = original.y;
+  const right = original.x + original.w, bottom = original.y + original.h;
+  const x = clamp(ip.x, 0, state.iw);
+  const y = clamp(ip.y, 0, state.ih);
+
+  if (corner.includes('w')) {
+    obj.rect.x = Math.min(x, right - minSize);
+    obj.rect.w = right - obj.rect.x;
+  } else {
+    obj.rect.x = left;
+    obj.rect.w = Math.max(minSize, x - left);
+  }
+  if (corner.includes('n')) {
+    obj.rect.y = Math.min(y, bottom - minSize);
+    obj.rect.h = bottom - obj.rect.y;
+  } else {
+    obj.rect.y = top;
+    obj.rect.h = Math.max(minSize, y - top);
+  }
+}
+
 function distToSeg(p, a, b) {
   const dx = b.x - a.x, dy = b.y - a.y;
   const l2 = dx * dx + dy * dy;
@@ -462,17 +556,15 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
 /* ---------- toolbar & selection ---------- */
 
+function setTool(tool) {
+  state.tool = tool;
+  document.querySelectorAll('#toolbar [data-tool]').forEach(b =>
+    b.classList.toggle('on', b.dataset.tool === tool));
+  $('brushRow').classList.toggle('show', tool === 'pen');
+}
+
 document.querySelectorAll('#toolbar [data-tool]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    state.tool = btn.dataset.tool;
-    document.querySelectorAll('#toolbar [data-tool]').forEach(b => b.classList.toggle('on', b === btn));
-    $('hint').textContent = {
-      rect: 'drag to draw a censor box',
-      pen: 'draw freely to censor',
-      move: 'drag the image, or drag a censor to move it',
-    }[state.tool];
-    $('brushRow').classList.toggle('show', state.tool === 'pen');
-  });
+  btn.addEventListener('click', () => setTool(btn.dataset.tool));
 });
 
 function selectObject(id) {
@@ -505,6 +597,7 @@ document.querySelectorAll('#selbar [data-effect]').forEach(btn => {
     obj.effect = btn.dataset.effect;
     syncSelUI(obj);
     requestRender();
+    commitHistory();
   });
 });
 
@@ -515,10 +608,12 @@ $('selIntensity').addEventListener('input', () => {
   $('selIntVal').textContent = obj.effect === 'blur' ? obj.intensity + 'px' : obj.intensity + ' blocks';
   requestRender();
 });
+$('selIntensity').addEventListener('change', commitHistory);
 
 $('selDelete').addEventListener('click', () => {
   state.objects = state.objects.filter(o => o.id !== state.selected);
   selectObject(null);
+  commitHistory();
 });
 
 $('selDone').addEventListener('click', () => selectObject(null));
@@ -554,19 +649,22 @@ $('brushSize').addEventListener('input', () => {
 });
 
 $('btnFit').addEventListener('click', () => { fitView(); requestRender(); });
+$('btnUndo').addEventListener('click', () => restoreHistory(historyIndex - 1));
+$('btnRedo').addEventListener('click', () => restoreHistory(historyIndex + 1));
 
 $('btnClear').addEventListener('click', () => {
   if (!state.objects.length) return;
   if (confirm('remove all ' + state.objects.length + ' censor object' + (state.objects.length > 1 ? 's' : '') + '?')) {
     state.objects = [];
     selectObject(null);
+    commitHistory();
   }
 });
 
 $('btnNew').addEventListener('click', () => {
   document.body.classList.remove('editing');
   state.img = null; state.objects = []; state.selected = null; fxChain = null;
-  setStatus('');
+  resetHistory();
 });
 
 /* ---------- export ---------- */
@@ -585,7 +683,6 @@ $('btnSave').addEventListener('click', () => {
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file] });
-        setStatus('saved');
         return;
       } catch (err) {
         if (err && err.name === 'AbortError') return; // user cancelled the sheet
@@ -596,17 +693,28 @@ $('btnSave').addEventListener('click', () => {
     a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    setStatus('saved');
   }, 'image/png');
 });
 
 /* ---------- keyboard (desktop nicety) ---------- */
 
 window.addEventListener('keydown', (e) => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === 'z') {
+    restoreHistory(historyIndex + (e.shiftKey ? 1 : -1));
+    e.preventDefault();
+    return;
+  }
+  if (mod && e.key.toLowerCase() === 'y') {
+    restoreHistory(historyIndex + 1);
+    e.preventDefault();
+    return;
+  }
   if (e.key === ' ') { state.space = true; e.preventDefault(); }
   if ((e.key === 'Delete' || e.key === 'Backspace') && state.selected) {
     state.objects = state.objects.filter(o => o.id !== state.selected);
     selectObject(null);
+    commitHistory();
   }
 });
 window.addEventListener('keyup', (e) => { if (e.key === ' ') state.space = false; });
@@ -626,8 +734,6 @@ canvas.addEventListener('wheel', (e) => {
 
 /* ---------- misc ---------- */
 
-function setStatus(t) { $('status').textContent = t; }
-
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -644,3 +750,5 @@ document.addEventListener('touchend', (e) => {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
+
+resetHistory();
