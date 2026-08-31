@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>censor icon lab</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: ui-monospace, monospace; background: #16161c; color: #d8d8e0; margin: 0; padding: 24px; }
+  h1 { font-size: 15px; font-weight: normal; margin: 0 0 20px; color: #9a9aa8; }
+  .layout { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; }
+  .controls { display: grid; grid-template-columns: auto 1fr auto; gap: 10px 14px; align-items: center; min-width: 340px; }
+  .controls label { font-size: 12px; color: #9a9aa8; }
+  .controls output { font-size: 12px; color: #d8d8e0; text-align: right; min-width: 48px; }
+  input[type=range] { width: 220px; accent-color: #8a8af0; }
+  input[type=color] { width: 40px; height: 24px; border: none; background: none; padding: 0; }
+  input[type=text] { background: #23232b; color: #d8d8e0; border: 1px solid #3a3a46; padding: 3px 8px; font: inherit; font-size: 12px; width: 180px; }
+  input[type=checkbox] { accent-color: #8a8af0; }
+  .previews { display: flex; flex-direction: column; gap: 18px; }
+  .row { display: flex; gap: 18px; align-items: flex-end; }
+  .pv { text-align: center; }
+  .pv div { font-size: 10px; color: #6a6a78; margin-top: 4px; }
+  canvas { background: #0c0c10; image-rendering: auto; }
+  .downloads { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+  button { background: #23232b; color: #d8d8e0; border: 1px solid #3a3a46; padding: 6px 14px; font: inherit; font-size: 12px; cursor: pointer; border-radius: 4px; }
+  button:hover { background: #2d2d38; }
+</style>
+</head>
+<body>
+<h1>censor icon lab — tweak, then download + replace files in icons/</h1>
+<div class="layout">
+  <div class="controls">
+    <label>pixel block</label><input id="block" type="range" min="4" max="64" step="1" value="21"><output id="block-o"></output>
+    <label>split %</label><input id="split" type="range" min="0" max="100" step="1" value="50"><output id="split-o"></output>
+    <label>letter size %</label><input id="lsize" type="range" min="30" max="95" step="1" value="66"><output id="lsize-o"></output>
+    <label>letter</label><input id="char" type="text" value="A" maxlength="2"><span></span>
+    <label>font</label><input id="font" type="text" value="'Times New Roman', 'Liberation Serif', serif"><span></span>
+    <label>bold</label><input id="bold" type="checkbox"><span></span>
+    <label>checker cell</label><input id="cell" type="range" min="16" max="256" step="8" value="64"><output id="cell-o"></output>
+    <label>color 1</label><input id="c1" type="color" value="#23232b"><span></span>
+    <label>color 2</label><input id="c2" type="color" value="#3a3a46"><span></span>
+    <label>letter color</label><input id="c3" type="color" value="#ffffff"><span></span>
+    <label>corner radius</label><input id="radius" type="range" min="0" max="256" step="4" value="112"><output id="radius-o"></output>
+  </div>
+  <div class="previews">
+    <div class="row">
+      <div class="pv"><canvas id="pv512" width="512" height="512" style="width:256px;height:256px"></canvas><div>512</div></div>
+      <div class="pv"><canvas id="pv192" width="192" height="192" style="width:96px;height:96px"></canvas><div>192</div></div>
+      <div class="pv"><canvas id="pv180" width="180" height="180" style="width:90px;height:90px"></canvas><div>180</div></div>
+    </div>
+    <div class="row">
+      <div class="pv"><canvas id="pv64" width="64" height="64" style="width:64px;height:64px"></canvas><div>64</div></div>
+      <div class="pv"><canvas id="pv32" width="32" height="32" style="width:32px;height:32px"></canvas><div>32</div></div>
+      <div class="pv"><canvas id="pv16" width="16" height="16" style="width:16px;height:16px"></canvas><div>16</div></div>
+      <div class="pv"><canvas id="pvmask" width="512" height="512" style="width:128px;height:128px"></canvas><div>maskable</div></div>
+    </div>
+  </div>
+</div>
+<div class="downloads">
+  <button data-dl="icon-512.png,512,1">icon-512.png</button>
+  <button data-dl="icon-192.png,192,1">icon-192.png</button>
+  <button data-dl="icon-180.png,180,1">icon-180.png</button>
+  <button data-dl="icon-maskable-512.png,512,0">icon-maskable-512.png</button>
+  <button data-dl="icon.svg,512,1">icon.svg</button>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const ids = ['block','split','lsize','char','font','bold','cell','c1','c2','c3','radius'];
+const opts = {};
+function readOpts() {
+  for (const id of ids) {
+    const el = $(id);
+    opts[id] = el.type === 'checkbox' ? el.checked : el.value;
+  }
+  $('block-o').textContent = opts.block + 'px';
+  $('split-o').textContent = opts.split + '%';
+  $('lsize-o').textContent = opts.lsize + '%';
+  $('cell-o').textContent = opts.cell + 'px';
+  $('radius-o').textContent = opts.radius + 'px';
+}
+const letterCv = document.createElement('canvas');
+const tinyCv = document.createElement('canvas');
+
+function render(ctx, size, rounded) {
+  const s = n => n * size / 512;
+  ctx.fillStyle = opts.c1;
+  ctx.fillRect(0, 0, size, size);
+  const cell = Math.max(1, Math.round(s(+opts.cell)));
+  ctx.fillStyle = opts.c2;
+  for (let y = 0; y < size; y += cell)
+    for (let x = 0; x < size; x += cell)
+      if (((x / cell | 0) + (y / cell | 0)) % 2 === 0) ctx.fillRect(x, y, cell, cell);
+  letterCv.width = letterCv.height = size;
+  const l = letterCv.getContext('2d');
+  l.clearRect(0, 0, size, size);
+  l.fillStyle = opts.c3;
+  const px = size * +opts.lsize / 100;
+  l.font = (opts.bold ? 'bold ' : '') + px + 'px ' + opts.font;
+  l.textAlign = 'center';
+  l.textBaseline = 'middle';
+  l.fillText(opts.char || 'A', size / 2, size / 2 + size * 0.03);
+  const cutX = Math.round(size * +opts.split / 100);
+  const rw = size - cutX;
+  if (rw > 0 && +opts.block > 1) {
+    const f = Math.max(2, Math.round(s(+opts.block) * 2));
+    tinyCv.width = Math.max(1, Math.round(rw / f));
+    tinyCv.height = Math.max(1, Math.round(size / f));
+    const t = tinyCv.getContext('2d');
+    t.imageSmoothingEnabled = true;
+    t.drawImage(letterCv, cutX, 0, rw, size, 0, 0, tinyCv.width, tinyCv.height);
+    l.clearRect(cutX, 0, rw, size);
+    l.imageSmoothingEnabled = false;
+    l.drawImage(tinyCv, 0, 0, tinyCv.width, tinyCv.height, cutX, 0, rw, size);
+  } else if (rw > 0) {
+    l.clearRect(cutX, 0, rw, size);
+  }
+  ctx.drawImage(letterCv, 0, 0);
+}
+
+function renderIcon(cv, size, rounded) {
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, size, size);
+  render(ctx, size, rounded);
+  if (rounded && +opts.radius > 0) {
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.beginPath();
+    ctx.roundRect(0, 0, size, size, +opts.radius * size / 512);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+}
+
+function update() {
+  readOpts();
+  renderIcon($('pv512'), 512, true);
+  renderIcon($('pv192'), 192, true);
+  renderIcon($('pv180'), 180, true);
+  renderIcon($('pv64'), 64, true);
+  renderIcon($('pv32'), 32, true);
+  renderIcon($('pv16'), 16, true);
+  renderIcon($('pvmask'), 512, false);
+}
+
+function download(name, size, rounded) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  renderIcon(cv, size, !!rounded);
+  let url;
+  if (name.endsWith('.svg')) {
+    const b64 = cv.toDataURL('image/png').split(',')[1];
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512">\n'
+      + '  <image width="512" height="512" xlink:href="data:image/png;base64,' + b64 + '"/>\n</svg>\n';
+    url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+  } else {
+    url = cv.toDataURL('image/png');
+  }
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
+  if (url.startsWith('blob:')) setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+document.querySelectorAll('[data-dl]').forEach(b =>
+  b.addEventListener('click', () => { const [n, s, r] = b.dataset.dl.split(','); download(n, +s, +r); }));
+ids.forEach(id => $(id).addEventListener('input', update));
+document.fonts.ready.then(update);
+update();
+</script>
+</body>
+</html>
+
