@@ -7,7 +7,7 @@ const state = {
   iw: 0, ih: 0,
   tool: 'rect',         // 'rect' | 'pen' | 'move'
   mode: 'mosaic',       // default effect for new objects
-  intensity: 16,        // default intensity for new objects
+  intensity: 32,        // default intensity for new objects
   brush: 48,            // freehand brush radius, image px
   objects: [],          // {id, kind:'rect'|'stroke', effect, intensity, rect | points, radius}
   selected: null,
@@ -548,8 +548,8 @@ function syncSelUI(obj) {
   document.querySelectorAll('#selbar [data-effect]').forEach(b =>
     b.classList.toggle('on', b.dataset.effect === obj.effect));
   const slider = $('selIntensity');
-  slider.min = obj.effect === 'blur' ? 2 : 4;
-  slider.max = obj.effect === 'blur' ? 80 : 64;
+  slider.min = obj.effect === 'blur' ? 2 : 32;
+  slider.max = obj.effect === 'blur' ? 80 : 256;
   slider.value = obj.intensity;
   $('selIntVal').textContent = obj.effect === 'blur' ? obj.intensity + 'px' : obj.intensity + ' × ' + obj.intensity;
 }
@@ -560,7 +560,7 @@ document.querySelectorAll('#selbar [data-effect]').forEach(btn => {
     if (!obj || obj.effect === btn.dataset.effect) return;
     // carry perceived strength across modes
     obj.intensity = obj.effect === 'blur'
-      ? clamp(Math.round(state.iw / (obj.intensity * 1.2)), 4, 64)
+      ? clamp(Math.round(state.iw / (obj.intensity * 1.2)), 32, 256)
       : clamp(Math.round(state.iw / (obj.intensity * 1.2)), 2, 80);
     obj.effect = btn.dataset.effect;
     syncSelUI(obj);
@@ -592,7 +592,7 @@ document.querySelectorAll('#newbar [data-effect]').forEach(btn => {
   btn.addEventListener('click', () => {
     state.mode = btn.dataset.effect;
     document.querySelectorAll('#newbar [data-effect]').forEach(b => b.classList.toggle('on', b === btn));
-    state.intensity = state.mode === 'blur' ? 12 : 16;
+    state.intensity = state.mode === 'blur' ? 12 : 32;
     syncNewUI();
   });
 });
@@ -604,8 +604,8 @@ $('newIntensity').addEventListener('input', () => {
 
 function syncNewUI() {
   const slider = $('newIntensity');
-  slider.min = state.mode === 'blur' ? 2 : 4;
-  slider.max = state.mode === 'blur' ? 80 : 64;
+  slider.min = state.mode === 'blur' ? 2 : 32;
+  slider.max = state.mode === 'blur' ? 80 : 256;
   slider.value = state.intensity;
   $('newIntVal').textContent = state.mode === 'blur' ? state.intensity + 'px' : state.intensity + ' × ' + state.intensity;
 }
