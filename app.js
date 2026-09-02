@@ -113,16 +113,18 @@ function drawEffect(c, obj) {
     fxCtx.imageSmoothingQuality = 'low';
     fxCtx.drawImage(blr, 0, 0, bw, bh, 0, 0, state.iw, state.ih);
   } else {
-    // Each integer strength is an exact N × N grid, so one slider tick adds
-    // one row and one column instead of snapping between powers of two.
-    const n = Math.max(1, Math.round(obj.intensity));
-    msc.width = n; msc.height = n;
+    // Strength is the side length of each square in source-image pixels.
+    // The grid may extend past the right or bottom edge so its interior cells
+    // never stretch to follow a non-square source image.
+    const cell = Math.max(1, Math.round(obj.intensity));
+    const nx = Math.max(1, Math.ceil(state.iw / cell));
+    const ny = Math.max(1, Math.ceil(state.ih / cell));
+    msc.width = nx; msc.height = ny;
     mscCtx.imageSmoothingEnabled = true;
     mscCtx.imageSmoothingQuality = 'high';
-    mscCtx.clearRect(0, 0, n, n);
-    mscCtx.drawImage(state.img, 0, 0, state.iw, state.ih, 0, 0, n, n);
+    mscCtx.drawImage(state.img, 0, 0, state.iw, state.ih, 0, 0, nx, ny);
     fxCtx.imageSmoothingEnabled = false;
-    fxCtx.drawImage(msc, 0, 0, n, n, 0, 0, state.iw, state.ih);
+    fxCtx.drawImage(msc, 0, 0, nx, ny, 0, 0, nx * cell, ny * cell);
   }
 
   // mask the layer to the object's shape
@@ -551,7 +553,7 @@ function syncSelUI(obj) {
   slider.min = obj.effect === 'blur' ? 2 : 32;
   slider.max = obj.effect === 'blur' ? 80 : 256;
   slider.value = obj.intensity;
-  $('selIntVal').textContent = obj.effect === 'blur' ? obj.intensity + 'px' : obj.intensity + ' × ' + obj.intensity;
+  $('selIntVal').textContent = obj.effect === 'blur' ? obj.intensity + 'px' : obj.intensity + ' × ' + obj.intensity + 'px';
 }
 
 document.querySelectorAll('#selbar [data-effect]').forEach(btn => {
@@ -560,8 +562,8 @@ document.querySelectorAll('#selbar [data-effect]').forEach(btn => {
     if (!obj || obj.effect === btn.dataset.effect) return;
     // carry perceived strength across modes
     obj.intensity = obj.effect === 'blur'
-      ? clamp(Math.round(state.iw / (obj.intensity * 1.2)), 32, 256)
-      : clamp(Math.round(state.iw / (obj.intensity * 1.2)), 2, 80);
+      ? clamp(Math.round(obj.intensity * 4), 32, 256)
+      : clamp(Math.round(obj.intensity / 4), 2, 80);
     obj.effect = btn.dataset.effect;
     syncSelUI(obj);
     requestRender();
@@ -573,7 +575,7 @@ $('selIntensity').addEventListener('input', () => {
   const obj = state.objects.find(o => o.id === state.selected);
   if (!obj) return;
   obj.intensity = +$('selIntensity').value;
-  $('selIntVal').textContent = obj.effect === 'blur' ? obj.intensity + 'px' : obj.intensity + ' × ' + obj.intensity;
+  $('selIntVal').textContent = obj.effect === 'blur' ? obj.intensity + 'px' : obj.intensity + ' × ' + obj.intensity + 'px';
   requestRender();
 });
 $('selIntensity').addEventListener('change', commitHistory);
@@ -607,7 +609,7 @@ function syncNewUI() {
   slider.min = state.mode === 'blur' ? 2 : 32;
   slider.max = state.mode === 'blur' ? 80 : 256;
   slider.value = state.intensity;
-  $('newIntVal').textContent = state.mode === 'blur' ? state.intensity + 'px' : state.intensity + ' × ' + state.intensity;
+  $('newIntVal').textContent = state.mode === 'blur' ? state.intensity + 'px' : state.intensity + ' × ' + state.intensity + 'px';
 }
 syncNewUI();
 
