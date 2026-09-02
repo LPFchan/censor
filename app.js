@@ -23,7 +23,8 @@ const fx = document.createElement('canvas');   // scratch: object effect layer
 const fxCtx = fx.getContext('2d');
 const msc = document.createElement('canvas');  // scratch: mosaic grid (1 px per block)
 const mscCtx = msc.getContext('2d');
-let fxChain = null; // reused downsample buffers for compositing
+const blr = document.createElement('canvas');  // scratch: filtered, downsampled blur
+const blrCtx = blr.getContext('2d');
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 
@@ -42,7 +43,6 @@ $('file').addEventListener('change', async (e) => {
     bmp.close();
     state.img = off; state.iw = w; state.ih = h;
     state.objects = []; state.selected = null;
-    fxChain = null;
     document.body.classList.add('editing');
     fitView();
     resetHistory();
@@ -79,82 +79,50 @@ function toImage(p) {
   return { x: (p.x - state.view.ox) / state.view.scale, y: (p.y - state.view.oy) / state.view.scale };
 }
 
-/* ---------- effect rendering ----------
- * Downsample chain: each buffer is half the previous, always derived from
- * its parent so quality stays high. The 2x box filter centers each output
- * pixel at (2n+1) source px; offsets below are calibrated to that. */
-
-function chain() {
-  if (fxChain) return fxChain;
-  fxChain = [state.img]; // step 0 = full res, step s = downsampled 2^s
-  let src = state.img, w = state.iw, h = state.ih;
-  for (let s = 1; s <= 3; s++) {
-    const cw = Math.max(1, Math.ceil(w / 2)), ch = Math.max(1, Math.ceil(h / 2));
-    const c = document.createElement('canvas');
-    c.width = cw; c.height = ch;
-    const g = c.getContext('2d');
-    g.imageSmoothingEnabled = true;
-    g.imageSmoothingQuality = 'high';
-    g.drawImage(src, 0, 0, cw, ch);
-    fxChain.push(c);
-    src = c; w = cw; h = ch;
-  }
-  return fxChain;
-}
-
-// Smallest downsample step s in [0,3] that satisfies the intensity.
-function pickStep(effect, intensity) {
-  if (effect === 'blur') {
-    const steps = Math.log2(intensity / 0.7);
-    return Math.max(0, Math.min(3, Math.ceil(steps - 1e-9)));
-  }
-  const bs = state.iw / intensity; // block size in image px
-  const steps = Math.log2(bs / 1.42);
-  return Math.max(0, Math.min(3, Math.ceil(steps - 1e-9)));
-}
-
-function blurOffset(intensity, step) {
-  const k = intensity / Math.pow(2, step);        // radius in downsampled px
-  return ((k - 0.5) / 2) * Math.pow(2, step - 1); // back to full-res px
-}
-
-function blockSize(intensity, step) {
-  const k = Math.pow(2, step);
-  const raw = Math.max(1, Math.round(state.iw / (intensity * k)));
-  const snapped = Math.max(1, Math.pow(2, Math.round(Math.log2(raw))));
-  return snapped * k; // full-res px; snapped so buffer pixels never straddle blocks
-}
+/* ---------- effect rendering ---------- */
 
 // Render one object's effect into the scratch canvas, then composite it
 // onto c (full-res coordinate space) masked to the object's shape.
 function drawEffect(c, obj) {
-  const ch = chain();
-  const step = pickStep(obj.effect, obj.intensity);
-  const buf = ch[step];
-
   if (fx.width !== state.iw || fx.height !== state.ih) {
     fx.width = state.iw; fx.height = state.ih;
   }
   fxCtx.setTransform(1, 0, 0, 1, 0, 0);
+  fxCtx.filter = 'none';
   fxCtx.clearRect(0, 0, fx.width, fx.height);
   fxCtx.imageSmoothingEnabled = true;
   fxCtx.imageSmoothingQuality = 'high';
 
   if (obj.effect === 'blur') {
-    const o = blurOffset(obj.intensity, step);
-    fxCtx.drawImage(buf, 0, 0, buf.width, buf.height, o, o, state.iw + 2 * o, state.ih + 2 * o);
-  } else {
-    // mosaic: shrink to one pixel per block, then upscale with smoothing off
-    // so the blocks stay hard-edged. The grid is anchored to the image origin.
-    const bs = blockSize(obj.intensity, step);
-    const nx = Math.max(1, Math.ceil(state.iw / bs)), ny = Math.max(1, Math.ceil(state.ih / bs));
-    msc.width = nx; msc.height = ny;
+    // A real blur changes only the radius. Keeping the source and destination
+    // at the same coordinates prevents the image from drifting as it changes.
+    // Larger radii run on a smaller scratch image to keep slider updates fast.
+    const scale = Math.min(8, Math.pow(2, Math.max(0, Math.ceil(Math.log2(obj.intensity / 4)))));
+    const bw = Math.max(1, Math.ceil(state.iw / scale));
+    const bh = Math.max(1, Math.ceil(state.ih / scale));
+    msc.width = bw; msc.height = bh;
     mscCtx.imageSmoothingEnabled = true;
     mscCtx.imageSmoothingQuality = 'high';
-    mscCtx.clearRect(0, 0, nx, ny);
-    mscCtx.drawImage(buf, 0, 0, buf.width, buf.height, 0, 0, nx, ny);
+    mscCtx.drawImage(state.img, 0, 0, state.iw, state.ih, 0, 0, bw, bh);
+    blr.width = bw; blr.height = bh;
+    blrCtx.filter = `blur(${obj.intensity / scale}px)`;
+    blrCtx.drawImage(msc, 0, 0);
+    blrCtx.filter = 'none';
+    // Bilinear enlargement is already smooth and avoids an expensive second
+    // high-quality resampling pass over the full-resolution image.
+    fxCtx.imageSmoothingQuality = 'low';
+    fxCtx.drawImage(blr, 0, 0, bw, bh, 0, 0, state.iw, state.ih);
+  } else {
+    // Each integer strength is an exact N × N grid, so one slider tick adds
+    // one row and one column instead of snapping between powers of two.
+    const n = Math.max(1, Math.round(obj.intensity));
+    msc.width = n; msc.height = n;
+    mscCtx.imageSmoothingEnabled = true;
+    mscCtx.imageSmoothingQuality = 'high';
+    mscCtx.clearRect(0, 0, n, n);
+    mscCtx.drawImage(state.img, 0, 0, state.iw, state.ih, 0, 0, n, n);
     fxCtx.imageSmoothingEnabled = false;
-    fxCtx.drawImage(msc, 0, 0, nx, ny, 0, 0, nx * bs, ny * bs);
+    fxCtx.drawImage(msc, 0, 0, n, n, 0, 0, state.iw, state.ih);
   }
 
   // mask the layer to the object's shape
@@ -583,7 +551,7 @@ function syncSelUI(obj) {
   slider.min = obj.effect === 'blur' ? 2 : 4;
   slider.max = obj.effect === 'blur' ? 80 : 64;
   slider.value = obj.intensity;
-  $('selIntVal').textContent = obj.effect === 'blur' ? obj.intensity + 'px' : obj.intensity + ' blocks';
+  $('selIntVal').textContent = obj.effect === 'blur' ? obj.intensity + 'px' : obj.intensity + ' × ' + obj.intensity;
 }
 
 document.querySelectorAll('#selbar [data-effect]').forEach(btn => {
@@ -605,7 +573,7 @@ $('selIntensity').addEventListener('input', () => {
   const obj = state.objects.find(o => o.id === state.selected);
   if (!obj) return;
   obj.intensity = +$('selIntensity').value;
-  $('selIntVal').textContent = obj.effect === 'blur' ? obj.intensity + 'px' : obj.intensity + ' blocks';
+  $('selIntVal').textContent = obj.effect === 'blur' ? obj.intensity + 'px' : obj.intensity + ' × ' + obj.intensity;
   requestRender();
 });
 $('selIntensity').addEventListener('change', commitHistory);
@@ -639,7 +607,7 @@ function syncNewUI() {
   slider.min = state.mode === 'blur' ? 2 : 4;
   slider.max = state.mode === 'blur' ? 80 : 64;
   slider.value = state.intensity;
-  $('newIntVal').textContent = state.mode === 'blur' ? state.intensity + 'px' : state.intensity + ' blocks';
+  $('newIntVal').textContent = state.mode === 'blur' ? state.intensity + 'px' : state.intensity + ' × ' + state.intensity;
 }
 syncNewUI();
 
@@ -663,7 +631,7 @@ $('btnClear').addEventListener('click', () => {
 
 $('btnNew').addEventListener('click', () => {
   document.body.classList.remove('editing');
-  state.img = null; state.objects = []; state.selected = null; fxChain = null;
+  state.img = null; state.objects = []; state.selected = null;
   resetHistory();
 });
 
