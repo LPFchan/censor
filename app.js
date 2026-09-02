@@ -550,8 +550,8 @@ function syncSelUI(obj) {
   document.querySelectorAll('#selbar [data-effect]').forEach(b =>
     b.classList.toggle('on', b.dataset.effect === obj.effect));
   const slider = $('selIntensity');
-  slider.min = obj.effect === 'blur' ? 2 : 32;
-  slider.max = obj.effect === 'blur' ? 80 : 256;
+  slider.min = obj.effect === 'blur' ? 2 : 1;
+  slider.max = obj.effect === 'blur' ? 80 : 64;
   slider.value = obj.intensity;
   $('selIntVal').textContent = obj.effect === 'blur' ? obj.intensity + 'px' : obj.intensity + ' × ' + obj.intensity + 'px';
 }
@@ -562,7 +562,7 @@ document.querySelectorAll('#selbar [data-effect]').forEach(btn => {
     if (!obj || obj.effect === btn.dataset.effect) return;
     // carry perceived strength across modes
     obj.intensity = obj.effect === 'blur'
-      ? clamp(Math.round(obj.intensity * 4), 32, 256)
+      ? clamp(Math.round(obj.intensity * 4), 1, 64)
       : clamp(Math.round(obj.intensity / 4), 2, 80);
     obj.effect = btn.dataset.effect;
     syncSelUI(obj);
@@ -606,8 +606,8 @@ $('newIntensity').addEventListener('input', () => {
 
 function syncNewUI() {
   const slider = $('newIntensity');
-  slider.min = state.mode === 'blur' ? 2 : 32;
-  slider.max = state.mode === 'blur' ? 80 : 256;
+  slider.min = state.mode === 'blur' ? 2 : 1;
+  slider.max = state.mode === 'blur' ? 80 : 64;
   slider.value = state.intensity;
   $('newIntVal').textContent = state.mode === 'blur' ? state.intensity + 'px' : state.intensity + ' × ' + state.intensity + 'px';
 }
