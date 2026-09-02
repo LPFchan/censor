@@ -37,9 +37,8 @@ input[type='range'], label { touch-action: manipulation; }
 body.editing #landing { display: none; }
 
 .landing-inner .mark {
+  display: block;
   width: 72px; height: 72px; margin: 0 auto 18px;
-  border-radius: 18px;
-  background: repeating-conic-gradient(#3a3a46 0% 25%, #23232b 0% 50%) 0 0 / 18px 18px;
   box-shadow: 0 8px 30px rgba(0,0,0,.45);
 }
 
