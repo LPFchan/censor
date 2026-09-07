@@ -158,4 +158,4 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-http.server.ThreadingHTTPServer(('0.0.0.0', 8601), Handler).serve_forever()
+http.server.ThreadingHTTPServer(('0.0.0.0', 8600), Handler).serve_forever()
