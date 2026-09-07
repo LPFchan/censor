@@ -11,11 +11,15 @@ import binascii
 import io
 import math
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
-Image.MAX_IMAGE_PIXELS = 64_000_000  # decompression-bomb guard, ~8k x 8k
+# Decompression-bomb guard. 32 MP keeps peak RGBA memory for source + layers
+# + output around 400 MiB, inside the container's 512 MiB limit. Pillow raises
+# above this instead of just warning.
+Image.MAX_IMAGE_PIXELS = 32_000_000
 
 MAX_DIMENSION = 8192
+MAX_PIXELS = 32_000_000
 MAX_BASE64_CHARS = 40_000_000  # ~30 MB of image data once decoded
 
 BLUR_MIN, BLUR_MAX = 2, 80      # radius in px, same as the app's slider
@@ -52,11 +56,23 @@ def decode_image(image_b64: str | None = None, image_url: str | None = None) -> 
         raise CensorError("image data is not valid base64") from None
     try:
         img = Image.open(io.BytesIO(raw))
-        img.load()
     except Exception:
         raise CensorError("could not decode image (supported: PNG, JPEG, WebP, GIF, BMP, TIFF)") from None
+    # Reject oversized rasters before paying for the decode: headers are read
+    # at open() time, so this check is cheap.
     if max(img.size) > MAX_DIMENSION:
         raise CensorError(f"image dimensions exceed {MAX_DIMENSION}px")
+    if img.width * img.height > MAX_PIXELS:
+        raise CensorError(f"image exceeds {MAX_PIXELS // 1_000_000} megapixels")
+    try:
+        img.load()
+    except Image.DecompressionBombError:
+        raise CensorError("image expands beyond the safe pixel limit") from None
+    except Exception:
+        raise CensorError("could not decode image (supported: PNG, JPEG, WebP, GIF, BMP, TIFF)") from None
+    # Browsers draw phone photos rotated per EXIF orientation; Pillow does not.
+    # Normalize so region coordinates address the pixels the caller sees.
+    img = ImageOps.exif_transpose(img)
     return img, (img.format or "PNG").upper()
 
 
@@ -95,13 +111,15 @@ def _blur_layer(img: Image.Image, intensity: int) -> Image.Image:
 
 def _mosaic_layer(img: Image.Image, intensity: int) -> Image.Image:
     # Port of the app's mosaic: shrink to one pixel per cell with smoothing,
-    # then scale back up with smoothing off so cells stay hard-edged.
+    # then scale back up to the grid size with smoothing off and crop, so cell
+    # widths match the browser (the final cell may be clipped at the edge).
     cell = max(MOSAIC_MIN, round(intensity))
     bilinear, nearest = _resample()
     nx = max(1, math.ceil(img.width / cell))
     ny = max(1, math.ceil(img.height / cell))
     small = img.resize((nx, ny), bilinear)
-    return small.resize(img.size, nearest)
+    grid = small.resize((nx * cell, ny * cell), nearest)
+    return grid.crop((0, 0, img.width, img.height))
 
 
 def _ellipse_mask(size: tuple[int, int], x: float, y: float, w: float, h: float) -> Image.Image:
@@ -123,9 +141,11 @@ def _normalize_regions(img: Image.Image, regions: list[dict]) -> list[dict]:
             raise CensorError(f"region {i}: x, y, w, h must be numbers") from None
         if w <= 0 or h <= 0:
             raise CensorError(f"region {i}: w and h must be positive")
-        x0, y0 = max(0.0, x), max(0.0, y)
-        x1, y1 = min(float(img.width), x + w), min(float(img.height), y + h)
-        if x1 - x0 < 1 or y1 - y0 < 1:
+        # Only reject regions with no visible coverage. Geometry itself is NOT
+        # clipped here: clipping an ellipse's bounding box would reshape it and
+        # leave requested pixels uncovered, so masks are drawn at full geometry
+        # and clipped by the image boundary instead.
+        if x + w < 1 or y + h < 1 or x > img.width - 1 or y > img.height - 1:
             raise CensorError(f"region {i}: lies outside the {img.width}x{img.height} image")
         shape = r.get("shape", "rect")
         if shape not in ("rect", "ellipse"):
@@ -143,7 +163,7 @@ def _normalize_regions(img: Image.Image, regions: list[dict]) -> list[dict]:
         lo, hi = (MOSAIC_MIN, MOSAIC_MAX) if effect == "mosaic" else (BLUR_MIN, BLUR_MAX)
         if not lo <= strength <= hi:
             raise CensorError(f"region {i}: {effect} strength must be {lo}..{hi}")
-        out.append({"box": (x0, y0, x1, y1), "shape": shape, "effect": effect, "strength": strength})
+        out.append({"box": (x, y, x + w, y + h), "shape": shape, "effect": effect, "strength": strength})
     return out
 
 
@@ -153,7 +173,9 @@ def censor(img: Image.Image, regions: list[dict]) -> Image.Image:
     out = src.copy()
     for r in _normalize_regions(img, regions):
         x0, y0, x1, y1 = r["box"]
-        layer = _blur_layer(src, r["strength"]) if r["effect"] == "blur" else _mosaic_layer(src, r["strength"])
+        # Effects run on the current output, so overlapping regions deepen
+        # censorship instead of resetting it to the original.
+        layer = _blur_layer(out, r["strength"]) if r["effect"] == "blur" else _mosaic_layer(out, r["strength"])
         if r["shape"] == "ellipse":
             mask = _ellipse_mask(img.size, x0, y0, x1 - x0, y1 - y0)
         else:

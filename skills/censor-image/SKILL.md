@@ -31,10 +31,12 @@ censoring *before* an image travels further than it needs to.
   plates, anything where hard pixels read as "deliberately hidden".
 - **blur** (strength 12 = 12 px radius): softer look; good for backgrounds and
   large areas.
-- For text you must guarantee is unreadable (keys, passwords, addresses),
-  prefer mosaic with strength >= 16, or overlap two regions. Very small text
-  needs proportionally larger strength — the cell size must exceed the glyph
-  height several times over.
+- For text you need unreadable (keys, passwords, addresses), prefer mosaic
+  with strength >= 16. Overlapping regions deepen censorship (effects stack).
+  Very small text needs proportionally larger strength — the cell size must
+  exceed the glyph height several times over. No mosaic strength *guarantees*
+  removal of arbitrary text: if the material is genuinely sensitive, look at
+  the returned image before forwarding it.
 - Use per-region `shape: "ellipse"` for faces and heads; `"rect"` (default)
   for text, plates, and screens.
 

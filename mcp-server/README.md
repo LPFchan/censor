@@ -20,7 +20,9 @@ memory-only /tmp.
 - `get_image_info(image_b64 | image_url)` — width, height, and format, for
   planning region coordinates.
 
-Limits: 30 MB decoded image, 8192 px max dimension, 64 regions per call.
+Limits: 30 MB decoded image, 8192 px max dimension, 32 megapixels, 64 regions
+per call. Phone photos are normalized to their displayed (EXIF) orientation
+before regions are applied, so coordinates address the pixels you see.
 Strengths mirror the app: mosaic cell 1–64 px, blur radius 2–80 px.
 
 ## rate limits

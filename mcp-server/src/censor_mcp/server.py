@@ -55,6 +55,12 @@ class _CORSMiddleware:
         matched = self._echo_origin(origin)
 
         if scope["method"] == "OPTIONS":
+            # Browsers gate the real request on this preflight; rejecting an
+            # unapproved origin here is what actually enforces ALLOWED_ORIGINS.
+            if origin and not matched:
+                await send({"type": "http.response.start", "status": 403, "headers": [(b"content-type", b"text/plain")]})
+                await send({"type": "http.response.body", "body": b"origin not allowed"})
+                return
             resp_headers = [
                 (b"access-control-allow-methods", self.cors_methods),
                 (b"access-control-allow-headers", self.cors_allow_headers),
@@ -63,8 +69,6 @@ class _CORSMiddleware:
             ]
             if matched:
                 resp_headers.insert(0, (b"access-control-allow-origin", matched.encode()))
-            elif origin:
-                resp_headers.insert(0, (b"access-control-allow-origin", origin.encode()))
             await send({"type": "http.response.start", "status": 204, "headers": resp_headers})
             await send({"type": "http.response.body", "body": b""})
             return
@@ -74,8 +78,6 @@ class _CORSMiddleware:
                 hlist = list(message.get("headers", []))
                 if matched:
                     hlist.append((b"access-control-allow-origin", matched.encode()))
-                elif origin:
-                    hlist.append((b"access-control-allow-origin", origin.encode()))
                 hlist.append((b"access-control-expose-headers", self.cors_expose_headers))
                 hlist.append((b"vary", b"Origin"))
                 message["headers"] = hlist
@@ -98,10 +100,14 @@ class _RateLimitMiddleware:
 
     def _client_ip(self, scope) -> str:
         headers = dict(scope.get("headers", []))
-        # cloudflared terminates TLS and appends the real client here
+        # Trust chain: cloudflared -> serve.py -> here. cloudflared appends the
+        # real visitor to X-Forwarded-For and serve.py passes the chain through
+        # untouched, so the first hop is the visitor. Anything past it is
+        # client-supplied and ignored. When the header is absent the request
+        # arrived directly (local tests), so fall back to the peer address.
         xff = headers.get(b"x-forwarded-for", b"").decode()
         if xff:
-            return xff.split(",")[-1].strip()
+            return xff.split(",")[0].strip()
         return scope.get("client", ("unknown", 0))[0]
 
     def _allow(self, ip: str) -> tuple[bool, int]:
@@ -280,43 +286,29 @@ async def get_image_info(
     return {"width": img.width, "height": img.height, "format": fmt}
 
 
+# Conforms to the experimental MCP Server Card schema (ext-server-card):
+# identity/transport only; tools stay discoverable via the protocol itself.
 _SERVER_CARD = {
-    "serverInfo": {"name": "censor", "version": "1.0.0"},
-    "transport": {
-        "type": "streamable-http",
-        "endpoint": "https://censor.lost.plus/mcp",
+    "$schema": "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json",
+    "name": "plus.lost.censor/censor",
+    "version": "1.0.0",
+    "description": "Apply mosaic or Gaussian blur to regions of an image. Images are processed in memory and never stored.",
+    "title": "censor",
+    "websiteUrl": "https://censor.lost.plus",
+    "repository": {
+        "url": "https://github.com/LPFchan/censor",
+        "source": "github",
+        "subfolder": "mcp-server",
     },
-    "capabilities": {"tools": {}},
-    "tools": [
+    "remotes": [
         {
-            "name": "censor_image",
-            "description": "Apply mosaic or blur to pixel-coordinate regions of an image.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "image_b64": {"type": "string"},
-                    "image_url": {"type": "string"},
-                    "regions": {"type": "array", "items": _REGION_SCHEMA},
-                    "effect": {"type": "string", "enum": ["mosaic", "blur"], "default": "mosaic"},
-                    "strength": {"type": "integer"},
-                    "output_format": {"type": "string", "enum": ["png", "jpeg", "original"], "default": "original"},
-                },
-                "required": ["regions"],
-            },
-        },
-        {
-            "name": "get_image_info",
-            "description": "Return an image's width, height, and format.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "image_b64": {"type": "string"},
-                    "image_url": {"type": "string"},
-                },
-            },
-        },
+            "type": "streamable-http",
+            "url": "https://censor.lost.plus/mcp",
+        }
     ],
-    "privacy": "Images are processed in memory only and discarded immediately after each response.",
+    "_meta": {
+        "plus.lost.censor/privacy": "Images are processed in memory only and discarded immediately after each response.",
+    },
 }
 
 

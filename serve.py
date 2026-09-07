@@ -53,13 +53,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_error(405)
 
     def _proxy(self):
-        # hop-by-hop on loopback, so the 30 MB image limit lives here too
-        raw = self.rfile.read(int(self.headers.get('Content-Length') or 0)) if self.headers.get('Content-Length') else None
-        if raw and len(raw) > 45_000_000:
+        # Enforce the 45 MB cap (room for a 30 MB image plus JSON/base64
+        # overhead) BEFORE reading anything, so a hostile Content-Length
+        # cannot make this process allocate the body first.
+        transfer_encoding = self.headers.get('Transfer-Encoding', '').lower()
+        content_length = self.headers.get('Content-Length')
+        if transfer_encoding and transfer_encoding != 'identity':
+            # The base handler never decodes chunked bodies; forwarding the
+            # framing without the chunks would desync the upstream.
+            self.send_error(411, 'use Content-Length, chunked bodies are not proxied'); return
+        try:
+            length = int(content_length) if content_length is not None else 0
+        except ValueError:
+            self.send_error(400, 'bad Content-Length'); return
+        if length < 0 or length > 45_000_000:
             self.send_error(413, 'request too large'); return
+        raw = self.rfile.read(length) if length else None
+        if raw is not None and len(raw) < length:
+            return  # client went away mid-upload; just drop the thread
         headers = {k: v for k, v in self.headers.items()
-                   if k.lower() not in ('host', 'content-length', 'connection')}
-        headers['X-Forwarded-For'] = (self.headers.get('X-Forwarded-For', '') + ', ' + self.client_address[0]).strip(', ')
+                   if k.lower() not in ('host', 'content-length', 'connection', 'transfer-encoding', 'keep-alive', 'upgrade')}
+        # cloudflared appends the real visitor to X-Forwarded-For before it
+        # reaches us; pass the chain through untouched so the rate limiter can
+        # key on the visitor, not on cloudflared's loopback address.
+        if self.headers.get('X-Forwarded-For'):
+            headers['X-Forwarded-For'] = self.headers['X-Forwarded-For']
+        elif 'X-Forwarded-For' in headers:
+            del headers['X-Forwarded-For']
         req = urllib.request.Request('http://127.0.0.1:8610' + self.path, data=raw,
                                      headers=headers, method=self.command)
         try:

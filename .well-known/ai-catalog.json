@@ -1,16 +1,16 @@
 {
-  "specVersion": "0.1.0",
+  "specVersion": "1.0",
   "host": {
-    "name": "censor",
-    "url": "https://censor.lost.plus",
-    "description": "On-device photo censoring (blur and mosaic) as a PWA, plus a public MCP server that applies the same effects for agents."
+    "displayName": "censor",
+    "documentationUrl": "https://censor.lost.plus"
   },
   "entries": [
     {
-      "urn": "urn:air:censor.lost.plus:mcp:censor",
+      "identifier": "urn:air:censor.lost.plus:mcp:censor",
       "displayName": "censor MCP server",
-      "type": "application/vnd.mcp.server+json",
+      "type": "application/mcp-server-card+json",
       "url": "https://censor.lost.plus/.well-known/mcp/server-card.json",
+      "description": "Apply mosaic or Gaussian blur to regions of an image. Images are processed in memory and never stored.",
       "representativeQueries": [
         "censor a face in this photo before uploading it",
         "pixelate the license plate in this screenshot",
@@ -19,10 +19,11 @@
       ]
     },
     {
-      "urn": "urn:air:censor.lost.plus:skill:censor-image",
+      "identifier": "urn:air:censor.lost.plus:skill:censor-image",
       "displayName": "censor-image agent skill",
       "type": "text/markdown",
       "url": "https://censor.lost.plus/skills/censor-image/SKILL.md",
+      "description": "Instructions for agents to censor image regions via the censor MCP server.",
       "representativeQueries": [
         "how do I make an agent mosaic part of an image",
         "instructions for censoring screenshots with an agent"
