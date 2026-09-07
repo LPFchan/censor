@@ -18,4 +18,4 @@ services:
       ALLOWED_ORIGINS: https://*.lost.plus
       RATE_LIMIT_PER_MINUTE: "30"
       RATE_LIMIT_PER_HOUR: "240"
-      CENSOR_WORKERS: "2"
+      CENSOR_WORKERS: "1"

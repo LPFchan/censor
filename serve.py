@@ -1,5 +1,11 @@
 import http.server, functools, json, base64, pathlib, urllib.request, urllib.error
 
+MAX_PROXY_BODY = 45_000_000  # room for a 30 MB image plus JSON/base64 overhead
+UPLOAD_TIMEOUT = 30          # seconds to send the whole body
+HOP_BY_HOP = {'host', 'content-length', 'connection', 'transfer-encoding',
+              'keep-alive', 'upgrade', 'te', 'trailer', 'proxy-authenticate',
+              'proxy-authorization'}
+
 ICONS = pathlib.Path(__file__).parent / 'icons'
 ALLOWED = {'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'}
 
@@ -53,9 +59,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_error(405)
 
     def _proxy(self):
-        # Enforce the 45 MB cap (room for a 30 MB image plus JSON/base64
-        # overhead) BEFORE reading anything, so a hostile Content-Length
-        # cannot make this process allocate the body first.
+        # Enforce the body cap BEFORE reading anything, so a hostile
+        # Content-Length cannot make this process allocate the body first.
+        # The socket timeout bounds how long a slow or stalled upload can
+        # hold this thread.
         transfer_encoding = self.headers.get('Transfer-Encoding', '').lower()
         content_length = self.headers.get('Content-Length')
         if transfer_encoding and transfer_encoding != 'identity':
@@ -66,28 +73,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             length = int(content_length) if content_length is not None else 0
         except ValueError:
             self.send_error(400, 'bad Content-Length'); return
-        if length < 0 or length > 45_000_000:
+        if length < 0 or length > MAX_PROXY_BODY:
             self.send_error(413, 'request too large'); return
-        raw = self.rfile.read(length) if length else None
+        self.connection.settimeout(UPLOAD_TIMEOUT)
+        try:
+            raw = self.rfile.read(length) if length else None
+        except (TimeoutError, OSError):
+            return  # stalled or interrupted upload; drop the thread
+        finally:
+            self.connection.settimeout(None)
         if raw is not None and len(raw) < length:
             return  # client went away mid-upload; just drop the thread
-        headers = {k: v for k, v in self.headers.items()
-                   if k.lower() not in ('host', 'content-length', 'connection', 'transfer-encoding', 'keep-alive', 'upgrade')}
-        # cloudflared appends the real visitor to X-Forwarded-For before it
-        # reaches us; pass the chain through untouched so the rate limiter can
-        # key on the visitor, not on cloudflared's loopback address.
-        if self.headers.get('X-Forwarded-For'):
-            headers['X-Forwarded-For'] = self.headers['X-Forwarded-For']
-        elif 'X-Forwarded-For' in headers:
-            del headers['X-Forwarded-For']
+        extra_hop = {h.strip().lower() for h in self.headers.get('Connection', '').split(',') if h.strip()}
+        skip = HOP_BY_HOP | extra_hop
+        headers = {k: v for k, v in self.headers.items() if k.lower() not in skip}
+        # X-Forwarded-For is client-spoofable (Cloudflare preserves and
+        # appends), so it is not forwarded at all. The visitor identity the
+        # rate limiter trusts is Cf-Connecting-Ip, set by the Cloudflare edge
+        # and unspoofable behind the tunnel; local direct tests pass it by hand.
+        headers.pop('X-Forwarded-For', None)
         req = urllib.request.Request('http://127.0.0.1:8610' + self.path, data=raw,
                                      headers=headers, method=self.command)
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
                 body = resp.read()
                 self.send_response(resp.status)
+                resp_skip = HOP_BY_HOP | {h.strip().lower() for h in resp.headers.get('Connection', '').split(',') if h.strip()}
                 for k, v in resp.headers.items():
-                    if k.lower() not in ('connection', 'transfer-encoding', 'content-length'):
+                    if k.lower() not in resp_skip:
                         self.send_header(k, v)
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
@@ -95,8 +108,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except urllib.error.HTTPError as e:
             body = e.read()
             self.send_response(e.code)
+            err_skip = HOP_BY_HOP | {h.strip().lower() for h in (e.headers.get('Connection', '') if e.headers else '').split(',') if h.strip()}
             for k, v in e.headers.items():
-                if k.lower() not in ('connection', 'transfer-encoding', 'content-length'):
+                if k.lower() not in err_skip:
                     self.send_header(k, v)
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()

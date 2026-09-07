@@ -54,13 +54,15 @@ class _CORSMiddleware:
         origin = origin_raw.decode() if origin_raw else None
         matched = self._echo_origin(origin)
 
+        # MCP transport requirement: any request carrying an Origin we do not
+        # approve is rejected, not merely denied a CORS header. Clients that
+        # send no Origin at all (CLI agents, curl) are unaffected.
+        if origin and not matched:
+            await send({"type": "http.response.start", "status": 403, "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"origin not allowed"})
+            return
+
         if scope["method"] == "OPTIONS":
-            # Browsers gate the real request on this preflight; rejecting an
-            # unapproved origin here is what actually enforces ALLOWED_ORIGINS.
-            if origin and not matched:
-                await send({"type": "http.response.start", "status": 403, "headers": [(b"content-type", b"text/plain")]})
-                await send({"type": "http.response.body", "body": b"origin not allowed"})
-                return
             resp_headers = [
                 (b"access-control-allow-methods", self.cors_methods),
                 (b"access-control-allow-headers", self.cors_allow_headers),
@@ -100,14 +102,15 @@ class _RateLimitMiddleware:
 
     def _client_ip(self, scope) -> str:
         headers = dict(scope.get("headers", []))
-        # Trust chain: cloudflared -> serve.py -> here. cloudflared appends the
-        # real visitor to X-Forwarded-For and serve.py passes the chain through
-        # untouched, so the first hop is the visitor. Anything past it is
-        # client-supplied and ignored. When the header is absent the request
-        # arrived directly (local tests), so fall back to the peer address.
-        xff = headers.get(b"x-forwarded-for", b"").decode()
-        if xff:
-            return xff.split(",")[0].strip()
+        # Cf-Connecting-Ip is set by the Cloudflare edge and forwarded by
+        # cloudflared; behind the tunnel it cannot be spoofed by clients.
+        # serve.py deliberately strips X-Forwarded-For (Cloudflare preserves
+        # and appends, so every hop in it is client-influenced). When neither
+        # header is present the request arrived directly (local tests), so
+        # fall back to the peer address.
+        cf_ip = headers.get(b"cf-connecting-ip", b"").decode().strip()
+        if cf_ip:
+            return cf_ip
         return scope.get("client", ("unknown", 0))[0]
 
     def _allow(self, ip: str) -> tuple[bool, int]:
@@ -292,7 +295,7 @@ _SERVER_CARD = {
     "$schema": "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json",
     "name": "plus.lost.censor/censor",
     "version": "1.0.0",
-    "description": "Apply mosaic or Gaussian blur to regions of an image. Images are processed in memory and never stored.",
+    "description": "Apply mosaic or blur to regions of an image. Processed in memory, never stored.",
     "title": "censor",
     "websiteUrl": "https://censor.lost.plus",
     "repository": {

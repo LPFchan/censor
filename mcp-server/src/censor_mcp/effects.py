@@ -21,9 +21,17 @@ Image.MAX_IMAGE_PIXELS = 32_000_000
 MAX_DIMENSION = 8192
 MAX_PIXELS = 32_000_000
 MAX_BASE64_CHARS = 40_000_000  # ~30 MB of image data once decoded
+MAX_REGION_COORD = 100_000     # geometry beyond this is nonsense and only
+                               # feeds Pillow's rasterizer pointless work
 
 BLUR_MIN, BLUR_MAX = 2, 80      # radius in px, same as the app's slider
 MOSAIC_MIN, MOSAIC_MAX = 1, 64  # square cell side in px, same as the app's slider
+
+# Effects bleed a few strength-lengths past their region, so process a padded
+# crop rather than the full image. This keeps peak memory independent of how
+# small the censored area is relative to the whole picture.
+def _pad_for(effect: str, strength: int) -> int:
+    return 4 * strength + 16
 
 
 class CensorError(ValueError):
@@ -58,6 +66,7 @@ def decode_image(image_b64: str | None = None, image_url: str | None = None) -> 
         img = Image.open(io.BytesIO(raw))
     except Exception:
         raise CensorError("could not decode image (supported: PNG, JPEG, WebP, GIF, BMP, TIFF)") from None
+    src_format = (img.format or "PNG").upper()  # exif_transpose clears .format
     # Reject oversized rasters before paying for the decode: headers are read
     # at open() time, so this check is cheap.
     if max(img.size) > MAX_DIMENSION:
@@ -73,7 +82,7 @@ def decode_image(image_b64: str | None = None, image_url: str | None = None) -> 
     # Browsers draw phone photos rotated per EXIF orientation; Pillow does not.
     # Normalize so region coordinates address the pixels the caller sees.
     img = ImageOps.exif_transpose(img)
-    return img, (img.format or "PNG").upper()
+    return img, src_format
 
 
 def encode_image(img: Image.Image, fmt: str) -> str:
@@ -141,6 +150,10 @@ def _normalize_regions(img: Image.Image, regions: list[dict]) -> list[dict]:
             raise CensorError(f"region {i}: x, y, w, h must be numbers") from None
         if w <= 0 or h <= 0:
             raise CensorError(f"region {i}: w and h must be positive")
+        if not all(math.isfinite(v) for v in (x, y, w, h)):
+            raise CensorError(f"region {i}: x, y, w, h must be finite")
+        if max(abs(x), abs(y), w, h) > MAX_REGION_COORD:
+            raise CensorError(f"region {i}: coordinates must be within +/-{MAX_REGION_COORD}")
         # Only reject regions with no visible coverage. Geometry itself is NOT
         # clipped here: clipping an ellipse's bounding box would reshape it and
         # leave requested pixels uncovered, so masks are drawn at full geometry
@@ -173,13 +186,21 @@ def censor(img: Image.Image, regions: list[dict]) -> Image.Image:
     out = src.copy()
     for r in _normalize_regions(img, regions):
         x0, y0, x1, y1 = r["box"]
-        # Effects run on the current output, so overlapping regions deepen
-        # censorship instead of resetting it to the original.
-        layer = _blur_layer(out, r["strength"]) if r["effect"] == "blur" else _mosaic_layer(out, r["strength"])
+        # Work on a padded crop of the current output: effects bleed past
+        # their region, and cropping keeps peak memory proportional to the
+        # censored area, not the whole image. Running on "out" (not "src")
+        # means overlapping regions deepen censorship instead of resetting it.
+        pad = _pad_for(r["effect"], r["strength"])
+        cx0 = max(0, int(math.floor(x0)) - pad)
+        cy0 = max(0, int(math.floor(y0)) - pad)
+        cx1 = min(img.width, int(math.ceil(x1)) + pad)
+        cy1 = min(img.height, int(math.ceil(y1)) + pad)
+        crop = out.crop((cx0, cy0, cx1, cy1))
+        layer = _blur_layer(crop, r["strength"]) if r["effect"] == "blur" else _mosaic_layer(crop, r["strength"])
         if r["shape"] == "ellipse":
-            mask = _ellipse_mask(img.size, x0, y0, x1 - x0, y1 - y0)
+            mask = _ellipse_mask(crop.size, x0 - cx0, y0 - cy0, x1 - x0, y1 - y0)
         else:
-            mask = Image.new("L", img.size, 0)
-            ImageDraw.Draw(mask).rectangle((x0, y0, x1, y1), fill=255)
-        out.paste(layer, (0, 0), mask)
+            mask = Image.new("L", crop.size, 0)
+            ImageDraw.Draw(mask).rectangle((x0 - cx0, y0 - cy0, x1 - cx0, y1 - cy0), fill=255)
+        out.paste(layer, (cx0, cy0), mask)
     return out
