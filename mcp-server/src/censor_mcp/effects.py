@@ -131,15 +131,18 @@ def _blur_layer(img: Image.Image, intensity: int, gx: int = 0, gy: int = 0) -> I
     return img.filter(ImageFilter.GaussianBlur(intensity))
 
 
-def _mosaic_chunk(img: Image.Image, intensity: int, gx: int, gy: int) -> Image.Image:
+def _mosaic_chunk(img: Image.Image, intensity: int, gx: int, gy: int,
+                  anchor_x: int = 0, anchor_y: int = 0) -> Image.Image:
     # Mosaic one crop of the source while keeping cell boundaries on the
-    # FULL-IMAGE grid, like the browser. gx/gy is the crop's origin in
-    # full-image coordinates; the reduced image is anchored to the enclosing
-    # cell boundary (the caller's padding must cover straddling cells).
+    # grid established by (anchor_x, anchor_y) — the image origin for browser
+    # parity, or the region's own edge for ellipses/off-image rects. gx/gy is
+    # the crop's origin in full-image coordinates; the reduced image is
+    # aligned to the enclosing cell boundary of that same anchor so samples
+    # never shift with crop position.
     cell = max(MOSAIC_MIN, round(intensity))
     bilinear, nearest = _resample()
-    ax0 = (gx // cell) * cell
-    ay0 = (gy // cell) * cell
+    ax0 = anchor_x + math.floor((gx - anchor_x) / cell) * cell
+    ay0 = anchor_y + math.floor((gy - anchor_y) / cell) * cell
     ox_rel, oy_rel = gx - ax0, gy - ay0
     nx = max(1, math.ceil((ox_rel + img.width) / cell))
     ny = max(1, math.ceil((oy_rel + img.height) / cell))
@@ -278,14 +281,21 @@ def _apply_region(out: Image.Image, blur_source: Image.Image, mosaic_source: Ima
         layer = _blur_layer(crop, r["strength"], cx0, cy0)
     else:
         crop = mosaic_source.crop((cx0, cy0, cx1, cy1))
-        layer = _mosaic_chunk(crop, r["strength"], cx0, cy0)
-    # Write-window bounds are EXCLUSIVE on the bottom/right (Pillow rectangles
-    # include both endpoints, so -1), which keeps adjacent chunks from writing
-    # the shared boundary row twice.
-    mx0 = max(x0, wx0) - cx0
-    my0 = max(y0, wy0) - cy0
-    mx1 = min(x1, wx1) - cx0 - 1
-    my1 = min(y1, wy1) - cy0 - 1
+        layer = _mosaic_chunk(crop, r["strength"], cx0, cy0, anchor_x, anchor_y)
+    # Rasterize the write window to integer pixel bounds FIRST (floor top/left,
+    # ceil bottom/right), then make it exclusive on the bottom/right (Pillow
+    # rectangles include both endpoints, so -1). Doing the -1 on raw floats
+    # breaks fractional regions like w=0.5 (reversed rectangle).
+    px0 = math.floor(max(x0, wx0))
+    py0 = math.floor(max(y0, wy0))
+    px1 = math.ceil(min(x1, wx1))
+    py1 = math.ceil(min(y1, wy1))
+    if px1 <= px0 or py1 <= py0:
+        return  # write window covers no whole pixels
+    mx0 = px0 - cx0
+    my0 = py0 - cy0
+    mx1 = px1 - cx0 - 1
+    my1 = py1 - cy0 - 1
     if r["shape"] == "ellipse":
         mask = _ellipse_mask(crop.size, x0 - cx0, y0 - cy0, x1 - x0, y1 - y0)
         # Chunked writes must not paint outside this chunk's window, or the

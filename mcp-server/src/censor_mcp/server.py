@@ -163,10 +163,11 @@ class _AdmissionMiddleware:
     memory budget through input strings alone. Excess requests get a fast 503
     and never read a byte of body.
 
-    This gate is intentionally generous (larger than the worker pool): it
-    bounds buffered-body memory, while the tool-level semaphore bounds actual
+    This gate bounds buffered-body memory; the worker semaphore bounds actual
     image-processing work. The two use separate counters so one request never
-    acquires both.
+    acquires both. The limit is sized against worst-case retained bytes:
+    each admitted request can hold a ~45 MB body, and the container must keep
+    total memory under 512 MiB including image rasters.
     """
 
     def __init__(self, app, limit: int):
@@ -196,42 +197,47 @@ class _AdmissionMiddleware:
 # Image decode + effects are CPU-bound, so run them off the event loop.
 _pool = ThreadPoolExecutor(max_workers=int(os.environ.get("CENSOR_WORKERS", "1")))
 
-# Bound admitted work: without this, a burst of large uploads (each up to
-# ~40 MB of base64) sits in the executor's unbounded queue and can exceed
-# the container's memory limit before any rate limit trips. The HTTP-level
-# middleware above rejects excess requests before their bodies are read;
-# this tool-level semaphore is a second gate whose release is tied to actual
-# worker completion (see _process wrappers), not coroutine lifetime.
+# Bound retained work: without this, uploads (each up to ~45 MB of base64)
+# pile into the executor's unbounded queue and can exceed the container's
+# memory limit before any rate limit trips. The semaphore is acquired in the
+# TOOL (before submission, so queued requests are bounded too) and released
+# inside the worker's own finally (so a cancelled coroutine cannot free the
+# slot while work continues).
 _admission = threading.BoundedSemaphore(int(os.environ.get("CENSOR_MAX_INFLIGHT", "2")))
 
 
 def _process(image_b64: str | None, image_url: str | None, regions: list[dict],
              output_format: str) -> tuple[str, str, int, int]:
-    # Admission is acquired and released INSIDE the worker: if the awaiting
-    # coroutine is cancelled, the slot stays held until the work actually
-    # finishes instead of being freed early by the coroutine's finally.
-    if not _admission.acquire(blocking=False):
-        raise CensorError("server is busy processing other images; try again in a few seconds")
+    # Release happens INSIDE the worker: if the awaiting coroutine is
+    # cancelled, the slot stays held until the work actually finishes instead
+    # of being freed early by the coroutine's finally. (Acquire is in the
+    # tool, before submission, so the queue of waiting calls is bounded.)
+    # Errors are returned, not raised, so the tool can tell "worker ran and
+    # released" apart from "submission failed" without double-releasing.
     try:
-        img, src_fmt = decode_image(image_b64=image_b64, image_url=image_url)
-        width, height = img.size
-        result = censor(img, regions)
-        fmt = output_format.upper()
-        if fmt == "ORIGINAL":
-            fmt = "JPEG" if src_fmt == "JPEG" else "PNG"
-        if fmt not in ("PNG", "JPEG"):
-            raise CensorError("output_format must be 'png', 'jpeg', or 'original'")
-        return encode_image(result, fmt), fmt, width, height
+        try:
+            img, src_fmt = decode_image(image_b64=image_b64, image_url=image_url)
+            width, height = img.size
+            result = censor(img, regions)
+            fmt = output_format.upper()
+            if fmt == "ORIGINAL":
+                fmt = "JPEG" if src_fmt == "JPEG" else "PNG"
+            if fmt not in ("PNG", "JPEG"):
+                raise CensorError("output_format must be 'png', 'jpeg', or 'original'")
+            return (encode_image(result, fmt), fmt, width, height)
+        except CensorError as e:
+            return e
     finally:
         _admission.release()
 
 
 def _info(image_b64: str | None, image_url: str | None) -> dict:
-    if not _admission.acquire(blocking=False):
-        raise CensorError("server is busy processing other images; try again in a few seconds")
     try:
-        img, fmt = decode_image(image_b64=image_b64, image_url=image_url)
-        return {"width": img.width, "height": img.height, "format": fmt}
+        try:
+            img, fmt = decode_image(image_b64=image_b64, image_url=image_url)
+            return {"width": img.width, "height": img.height, "format": fmt}
+        except CensorError as e:
+            return e
     finally:
         _admission.release()
 
@@ -317,13 +323,26 @@ async def censor_image(
         for r in regions
     ]
 
+    if not _admission.acquire(blocking=False):
+        raise ValueError("server is busy processing other images; try again in a few seconds")
     loop = asyncio.get_running_loop()
     try:
-        b64, fmt, width, height = await loop.run_in_executor(
+        outcome = await loop.run_in_executor(
             _pool, _process, image_b64, image_url, regions, output_format
         )
-    except CensorError as e:
-        raise ValueError(str(e)) from None
+    except BaseException:
+        # Submission itself failed or the await was cancelled before the
+        # worker started: its finally never runs, so release here. If the
+        # worker already started, its finally releases too and BoundedSemaphore
+        # raises ValueError on the over-release; swallow that exact race.
+        try:
+            _admission.release()
+        except ValueError:
+            pass
+        raise
+    if isinstance(outcome, CensorError):
+        raise ValueError(str(outcome)) from None
+    b64, fmt, width, height = outcome
 
     meta = (
         f"Censored {len(regions)} region(s) on a {width}x{height} image; "
@@ -349,11 +368,20 @@ async def get_image_info(
     Call this first when you only have the image and need to plan censor_image
     regions in real pixel coordinates. Nothing is stored.
     """
+    if not _admission.acquire(blocking=False):
+        raise ValueError("server is busy processing other images; try again in a few seconds")
     loop = asyncio.get_running_loop()
     try:
-        return await loop.run_in_executor(_pool, _info, image_b64, image_url)
-    except CensorError as e:
-        raise ValueError(str(e)) from None
+        outcome = await loop.run_in_executor(_pool, _info, image_b64, image_url)
+    except BaseException:
+        try:
+            _admission.release()
+        except ValueError:
+            pass
+        raise
+    if isinstance(outcome, CensorError):
+        raise ValueError(str(outcome)) from None
+    return outcome
 
 
 # Conforms to the experimental MCP Server Card schema (ext-server-card):
@@ -419,8 +447,9 @@ _app = _CORSMiddleware(
                 host=os.environ.get("HOST", "0.0.0.0"),
                 transport_security=_build_transport_security(),
             ),
-            int(os.environ.get("CENSOR_MAX_INFLIGHT", "2"))
-            * int(os.environ.get("CENSOR_HTTP_ADMISSION_FACTOR", "4")),
+            # Match the worker semaphore: at most two retained request bodies
+            # (~90 MB) alongside image rasters, keeping total under 512 MiB.
+            int(os.environ.get("CENSOR_MAX_INFLIGHT", "2")),
         )
     )
 )
