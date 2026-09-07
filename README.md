@@ -30,6 +30,19 @@ nondestructive, all on-device. No uploads, no server, no accounts.
 Images never leave the device. The whole app is static files; editing happens
 entirely in canvas.
 
+## for agents
+
+The same effects are available to agents as an MCP server at
+`https://censor.lost.plus/mcp` (streamable HTTP, no auth): send an image as
+base64 plus `{x, y, w, h}` pixel regions, get the censored image back. Images
+are processed in memory and discarded immediately after each response —
+nothing is stored. Rate limits are lax (default 30/min per IP).
+
+- server card: `/.well-known/mcp/server-card.json`
+- agent skill: `/skills/censor-image/SKILL.md` (index at `/.well-known/agent-skills/index.json`)
+- capability manifest: `/.well-known/ai-catalog.json`
+- server source: `mcp-server/` (Pillow port of the app's canvas effects)
+
 ## develop
 
 It's just static files — serve the directory over HTTP:
