@@ -26,17 +26,17 @@ MAX_BASE64_CHARS = 40_000_000  # ~30 MB of image data once decoded
 MAX_REGION_COORD = 100_000     # geometry beyond this is nonsense and only
                                # feeds Pillow's rasterizer pointless work
 
-# Chunking threshold AND the cap on padded chunk dimensions. A chunk's write
-# area never exceeds 64 rows; padding (max 336px per side) then bounds the
-# processed crop at 8192 x 736, so source + grid + output stay under ~25 MiB
-# no matter how large the region or image is. Full worst-case budget:
-# 4 image rasters ~192 MiB + chunk ~25 MiB + 2 admitted inputs (raw body +
-# base64 string + decoded bytes, ~230 MiB retained) + interpreter ~50 MiB
-# ~= 500 MiB of heap. The container's memory ceiling is set above this with
-# headroom for allocator overhead; the measured-peak test (2 concurrent
-# max-size calls through the full server) must pass before any sizing
-# change ships.
-CHUNK_PIXELS = 512_000
+# Chunking cap on a chunk's WRITE height. Any region whose visible area is
+# taller than this is processed in horizontal chunks, so no region — however
+# tall or thin — is ever padded to full height. A chunk's write area is at
+# most 64 rows; padding (max 336px per side) plus cell alignment then bounds
+# the processed crop at roughly 8192 x ~840, keeping source + grid + output
+# under ~80 MiB no matter how large the region or image is. Full worst-case
+# budget: 4 image rasters ~192 MiB + chunk ~80 MiB + 2 admitted inputs (raw
+# body + base64 string + decoded bytes, ~230 MiB retained) + interpreter
+# ~50 MiB ~= 550 MiB of heap. The container's memory ceiling is set above
+# this with headroom; the measured-peak test (2 concurrent max-size calls
+# through the full server) must pass before any sizing change ships.
 CHUNK_MAX_ROWS = 64
 
 BLUR_MIN, BLUR_MAX = 2, 80      # radius in px, same as the app's slider
@@ -223,7 +223,7 @@ def censor(img: Image.Image, regions: list[dict]) -> Image.Image:
         vx1, vy1 = min(float(img.width), x1), min(float(img.height), y1)
         bw = int(math.ceil(vx1)) - int(math.floor(vx0))
         bh = int(math.ceil(vy1)) - int(math.floor(vy0))
-        if bw * bh > CHUNK_PIXELS and bh > 1:
+        if bh > CHUNK_MAX_ROWS and bh > 1:
             # A large visible area would need full-size transient buffers, so
             # process it in horizontal chunks. Masks always use the ORIGINAL
             # region geometry (never the chunk's), and every chunk reads from
@@ -231,7 +231,7 @@ def censor(img: Image.Image, regions: list[dict]) -> Image.Image:
             # cannot leak already-filtered pixels into a later chunk. The same
             # snapshot serves both effects, keeping peak rasters at four.
             snapshot = out.copy()
-            rows = max(1, min(CHUNK_MAX_ROWS, CHUNK_PIXELS // max(1, bw)))
+            rows = CHUNK_MAX_ROWS
             y = int(math.floor(vy0))
             yend = int(math.ceil(vy1))
             while y < yend:

@@ -4,7 +4,6 @@ import asyncio
 import fnmatch
 import math
 import os
-import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -177,28 +176,46 @@ class _AdmissionMiddleware:
     Python dicts — so the buffered body gets ONE structural scan: strip the
     single largest string literal (the image payload, legitimately huge) and
     reject if the remaining JSON exceeds a small cap. Bytes are discarded
-    before the app ever parses them. The scan is a deliberately crude regex;
-    false positives only reject, and a real image string is always the
-    largest string in an honest request.
+    before the app ever parses them. The scan is a hand-rolled state
+    machine, not a regex: it tracks string boundaries and escapes with O(1)
+    auxiliary memory, so a ~40MB base64 payload cannot trigger quadratic
+    backtracking. False positives only reject, and a real image string is
+    always the largest string in an honest request.
     """
 
     def __init__(self, app, limit: int):
         self.app = app
         self.semaphore = threading.BoundedSemaphore(limit)
         self.exempt_paths = {"/healthz", "/.well-known/mcp/server-card.json"}
-        # One pass over the body, capturing group 1 as the longest string
-        # content. Regex backtracking cost is bounded by the string length,
-        # and the body is already byte-capped at MAX_MCP_BODY.
-        self._string_re = re.compile(rb'"((?:[^"\\]|\\.)*)"')
 
     def _strip_largest_string(self, body: bytes) -> bytes:
-        best = None
+        # Walk once, tracking whether we are inside a JSON string and whether
+        # the previous byte was a backslash escape. Record the longest string
+        # content span. Constant extra memory regardless of payload size.
         best_span = None
-        for m in self._string_re.finditer(body):
-            size = len(m.group(1))
-            if best is None or size > best:
-                best = size
-                best_span = m.span(1)
+        best_len = 0
+        in_string = False
+        escaped = False
+        str_start = 0
+        n = len(body)
+        for i in range(n):
+            c = body[i]
+            if not in_string:
+                if c == 0x22:  # '"'
+                    in_string = True
+                    escaped = False
+                    str_start = i + 1
+            else:
+                if escaped:
+                    escaped = False
+                elif c == 0x5C:  # '\\'
+                    escaped = True
+                elif c == 0x22:  # closing '"'
+                    length = i - str_start
+                    if length > best_len:
+                        best_len = length
+                        best_span = (str_start, i)
+                    in_string = False
         if best_span is None:
             return body
         return body[: best_span[0]] + body[best_span[1]:]
@@ -229,51 +246,51 @@ class _AdmissionMiddleware:
             })
             await send({"type": "http.response.body", "body": body})
             return
-        if length > 0:
-            # Buffer and structurally screen the body BEFORE the app parses
-            # it. Any failure to read the declared length promptly rejects;
-            # the permit is still released in the finally below.
-            chunks = []
-            remaining = length
-            while remaining > 0:
-                message = await receive()
-                if message["type"] == "http.disconnect":
-                    self.semaphore.release()
-                    return
-                chunk = message.get("body", b"")
-                chunks.append(chunk)
-                remaining -= len(chunk)
-                if not message.get("more_body", False):
-                    break
-            raw = b"".join(chunks)
-            # Streaming GC during this scan keeps live memory at roughly ONE
-            # body copy: the stripped (image-free) bytes replace the raw
-            # buffer as soon as they exist, instead of both peaking together.
-            structural = self._strip_largest_string(raw)
-            oversized = remaining > 0 or len(structural) > MAX_JSON_NON_IMAGE
-            del structural
-            if oversized:
-                del raw
-                self.semaphore.release()
-                body = b'{"error":"request rejected: too much non-image JSON"}'
-                await send({
-                    "type": "http.response.start",
-                    "status": 413,
-                    "headers": [(b"content-type", b"application/json")],
-                })
-                await send({"type": "http.response.body", "body": body})
-                return
-            delivered = False
-
-            async def replay():
-                nonlocal delivered
-                if not delivered:
-                    delivered = True
-                    return {"type": "http.request", "body": raw, "more_body": False}
-                return await receive()
-
-            receive = replay
+        # Everything after a successful acquire runs inside ONE release-owning
+        # try/finally, so cancellation or an exception during buffering,
+        # screening, or the downstream app can never strand the permit.
         try:
+            if length > 0:
+                # Buffer and structurally screen the body BEFORE the app
+                # parses it. Any failure to read the declared length rejects.
+                chunks = []
+                remaining = length
+                while remaining > 0:
+                    message = await receive()
+                    if message["type"] == "http.disconnect":
+                        return
+                    chunk = message.get("body", b"")
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                    if not message.get("more_body", False):
+                        break
+                raw = b"".join(chunks)
+                structural = self._strip_largest_string(raw)
+                oversized = remaining > 0 or len(structural) > MAX_JSON_NON_IMAGE
+                del structural
+                if oversized:
+                    del raw
+                    body = b'{"error":"request rejected: too much non-image JSON"}'
+                    await send({
+                        "type": "http.response.start",
+                        "status": 413,
+                        "headers": [(b"content-type", b"application/json")],
+                    })
+                    await send({"type": "http.response.body", "body": body})
+                    return
+                orig_receive = receive
+                delivered = False
+
+                async def replay():
+                    nonlocal delivered
+                    if not delivered:
+                        delivered = True
+                        return {"type": "http.request", "body": raw, "more_body": False}
+                    # Delegate subsequent reads (e.g. disconnect monitoring)
+                    # to the ORIGINAL receive, captured before reassignment.
+                    return await orig_receive()
+
+                receive = replay
             await self.app(scope, receive, send)
         finally:
             self.semaphore.release()
@@ -543,9 +560,14 @@ _app = _CORSMiddleware(
                 stateless_http=True,
                 host=os.environ.get("HOST", "0.0.0.0"),
                 transport_security=_build_transport_security(),
+                # The SDK defaults to a 4 MiB body cap, which would reject
+                # any real image long before our own checks run. Match the
+                # admission gate's 41 MB ceiling so the two agree.
+                max_request_body_size=MAX_MCP_BODY,
             ),
             # Match the worker semaphore: at most two retained request bodies
-            # (~90 MB) alongside image rasters, keeping total under 512 MiB.
+            # alongside image rasters. The container ceiling (768m) is set
+            # above the measured worst-case peak for this limit.
             int(os.environ.get("CENSOR_MAX_INFLIGHT", "2")),
         )
     )
