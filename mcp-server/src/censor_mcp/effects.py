@@ -13,16 +13,21 @@ import math
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
-# Decompression-bomb guard. 32 MP keeps peak RGBA memory for source + layers
-# + output around 400 MiB, inside the container's 512 MiB limit. Pillow raises
-# above this instead of just warning.
-Image.MAX_IMAGE_PIXELS = 32_000_000
+# Decompression-bomb guard, sized from the container's 512 MiB limit: the
+# persistent rasters (decoded image, RGBA source, output copy) plus transient
+# region/crop/layer buffers stay under roughly 6 bytes per pixel even for a
+# full-image region. Pillow raises above this instead of just warning.
+Image.MAX_IMAGE_PIXELS = 20_000_000
 
 MAX_DIMENSION = 8192
-MAX_PIXELS = 32_000_000
+MAX_PIXELS = 20_000_000
 MAX_BASE64_CHARS = 40_000_000  # ~30 MB of image data once decoded
 MAX_REGION_COORD = 100_000     # geometry beyond this is nonsense and only
                                # feeds Pillow's rasterizer pointless work
+
+# Regions bigger than this are processed in horizontal chunks so transient
+# buffers stay small no matter how large the censored area is.
+CHUNK_PIXELS = 4_000_000
 
 BLUR_MIN, BLUR_MAX = 2, 80      # radius in px, same as the app's slider
 MOSAIC_MIN, MOSAIC_MAX = 1, 64  # square cell side in px, same as the app's slider
@@ -118,17 +123,21 @@ def _blur_layer(img: Image.Image, intensity: int) -> Image.Image:
     return img.filter(ImageFilter.GaussianBlur(intensity))
 
 
-def _mosaic_layer(img: Image.Image, intensity: int) -> Image.Image:
-    # Port of the app's mosaic: shrink to one pixel per cell with smoothing,
-    # then scale back up to the grid size with smoothing off and crop, so cell
-    # widths match the browser (the final cell may be clipped at the edge).
+def _mosaic_chunk(img: Image.Image, intensity: int, ox: int, oy: int) -> Image.Image:
+    # Mosaic one crop of the source while keeping cell boundaries on the
+    # FULL-IMAGE grid, like the browser. Cells that straddle the crop edge
+    # keep their full-image average, so the crop must cover every whole cell
+    # it touches (the caller's padding guarantees this).
     cell = max(MOSAIC_MIN, round(intensity))
     bilinear, nearest = _resample()
-    nx = max(1, math.ceil(img.width / cell))
-    ny = max(1, math.ceil(img.height / cell))
+    cx0 = (ox // cell) * cell
+    cy0 = (oy // cell) * cell
+    ox_rel, oy_rel = ox - cx0, oy - cy0
+    nx = max(1, math.ceil((ox_rel + img.width) / cell))
+    ny = max(1, math.ceil((oy_rel + img.height) / cell))
     small = img.resize((nx, ny), bilinear)
     grid = small.resize((nx * cell, ny * cell), nearest)
-    return grid.crop((0, 0, img.width, img.height))
+    return grid.crop((ox_rel, oy_rel, ox_rel + img.width, oy_rel + img.height))
 
 
 def _ellipse_mask(size: tuple[int, int], x: float, y: float, w: float, h: float) -> Image.Image:
@@ -186,21 +195,45 @@ def censor(img: Image.Image, regions: list[dict]) -> Image.Image:
     out = src.copy()
     for r in _normalize_regions(img, regions):
         x0, y0, x1, y1 = r["box"]
-        # Work on a padded crop of the current output: effects bleed past
-        # their region, and cropping keeps peak memory proportional to the
-        # censored area, not the whole image. Running on "out" (not "src")
-        # means overlapping regions deepen censorship instead of resetting it.
         pad = _pad_for(r["effect"], r["strength"])
-        cx0 = max(0, int(math.floor(x0)) - pad)
-        cy0 = max(0, int(math.floor(y0)) - pad)
-        cx1 = min(img.width, int(math.ceil(x1)) + pad)
-        cy1 = min(img.height, int(math.ceil(y1)) + pad)
-        crop = out.crop((cx0, cy0, cx1, cy1))
-        layer = _blur_layer(crop, r["strength"]) if r["effect"] == "blur" else _mosaic_layer(crop, r["strength"])
-        if r["shape"] == "ellipse":
-            mask = _ellipse_mask(crop.size, x0 - cx0, y0 - cy0, x1 - x0, y1 - y0)
+        bw = int(math.ceil(x1)) - int(math.floor(x0))
+        bh = int(math.ceil(y1)) - int(math.floor(y0))
+        if bw * bh > CHUNK_PIXELS:
+            # A region covering a large image would need full-size transient
+            # buffers. Process it in horizontal chunks instead: each chunk is
+            # independently padded, effects stay local, and the mosaic helper
+            # keeps cells on the full-image grid so chunks join seamlessly.
+            rows = max(1, CHUNK_PIXELS // max(1, bw))
+            y = int(math.floor(y0))
+            while y < int(math.ceil(y1)):
+                _apply_region(out, x0, float(y), x1, min(float(y + rows), y1),
+                              r, pad, img.size)
+                y += rows
         else:
-            mask = Image.new("L", crop.size, 0)
-            ImageDraw.Draw(mask).rectangle((x0 - cx0, y0 - cy0, x1 - cx0, y1 - cy0), fill=255)
-        out.paste(layer, (cx0, cy0), mask)
+            _apply_region(out, x0, y0, x1, y1, r, pad, img.size)
     return out
+
+
+def _apply_region(out: Image.Image, x0: float, y0: float, x1: float, y1: float,
+                  r: dict, pad: int, size: tuple[int, int]) -> None:
+    width, height = size
+    # Work on a padded crop of the current output: effects bleed past their
+    # region, and cropping keeps peak memory proportional to the censored
+    # area. Running on "out" (not the original) means overlapping regions
+    # deepen censorship instead of resetting it. The pad exceeds the maximum
+    # effect bleed, so chunk boundaries are invisible.
+    cx0 = max(0, int(math.floor(x0)) - pad)
+    cy0 = max(0, int(math.floor(y0)) - pad)
+    cx1 = min(width, int(math.ceil(x1)) + pad)
+    cy1 = min(height, int(math.ceil(y1)) + pad)
+    crop = out.crop((cx0, cy0, cx1, cy1))
+    if r["effect"] == "blur":
+        layer = _blur_layer(crop, r["strength"])
+    else:
+        layer = _mosaic_chunk(crop, r["strength"], cx0, cy0)
+    if r["shape"] == "ellipse":
+        mask = _ellipse_mask(crop.size, x0 - cx0, y0 - cy0, x1 - x0, y1 - y0)
+    else:
+        mask = Image.new("L", crop.size, 0)
+        ImageDraw.Draw(mask).rectangle((x0 - cx0, y0 - cy0, x1 - cx0, y1 - cy0), fill=255)
+    out.paste(layer, (cx0, cy0), mask)

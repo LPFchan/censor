@@ -1,4 +1,11 @@
-import http.server, functools, json, base64, pathlib, urllib.request, urllib.error
+import http.server, functools, json, base64, pathlib, urllib.request, urllib.error, time
+
+def _connection_tokens(headers):
+    # Connection may appear several times; .get() would see only one field.
+    tokens = set()
+    for value in (headers.get_all('Connection') or []):
+        tokens.update(t.strip().lower() for t in value.split(',') if t.strip())
+    return tokens
 
 MAX_PROXY_BODY = 45_000_000  # room for a 30 MB image plus JSON/base64 overhead
 UPLOAD_TIMEOUT = 30          # seconds to send the whole body
@@ -75,30 +82,48 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(400, 'bad Content-Length'); return
         if length < 0 or length > MAX_PROXY_BODY:
             self.send_error(413, 'request too large'); return
-        self.connection.settimeout(UPLOAD_TIMEOUT)
-        try:
-            raw = self.rfile.read(length) if length else None
-        except (TimeoutError, OSError):
-            return  # stalled or interrupted upload; drop the thread
-        finally:
-            self.connection.settimeout(None)
-        if raw is not None and len(raw) < length:
-            return  # client went away mid-upload; just drop the thread
-        extra_hop = {h.strip().lower() for h in self.headers.get('Connection', '').split(',') if h.strip()}
+        # Absolute upload deadline, not just an idle timeout: a client feeding
+        # one byte every few seconds must not hold this thread forever.
+        # Reads go through rfile (the buffered reader parse_request already
+        # used) because a raw socket recv() would block on bytes rfile has
+        # already swallowed into its buffer; each bounded read gets a short
+        # socket timeout so the deadline is actually checkable.
+        raw = None
+        if length:
+            deadline = time.monotonic() + UPLOAD_TIMEOUT
+            chunks, remaining = [], length
+            try:
+                while remaining > 0:
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        return  # too slow overall; drop the thread
+                    self.connection.settimeout(min(5, left))
+                    part = self.rfile.read(min(1 << 20, remaining))
+                    if not part:
+                        return  # client went away mid-upload
+                    chunks.append(part)
+                    remaining -= len(part)
+            except (TimeoutError, OSError):
+                return  # stalled or interrupted upload; drop the thread
+            finally:
+                self.connection.settimeout(None)
+            raw = b''.join(chunks)
+        extra_hop = _connection_tokens(self.headers)
         skip = HOP_BY_HOP | extra_hop
-        headers = {k: v for k, v in self.headers.items() if k.lower() not in skip}
         # X-Forwarded-For is client-spoofable (Cloudflare preserves and
-        # appends), so it is not forwarded at all. The visitor identity the
-        # rate limiter trusts is Cf-Connecting-Ip, set by the Cloudflare edge
-        # and unspoofable behind the tunnel; local direct tests pass it by hand.
-        headers.pop('X-Forwarded-For', None)
+        # appends), so it is dropped in the filtering pass. The visitor
+        # identity the rate limiter trusts is Cf-Connecting-Ip, set by the
+        # Cloudflare edge and unspoofable behind the tunnel; local direct
+        # tests pass it by hand.
+        skip.add('x-forwarded-for')
+        headers = {k: v for k, v in self.headers.items() if k.lower() not in skip}
         req = urllib.request.Request('http://127.0.0.1:8610' + self.path, data=raw,
                                      headers=headers, method=self.command)
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
                 body = resp.read()
                 self.send_response(resp.status)
-                resp_skip = HOP_BY_HOP | {h.strip().lower() for h in resp.headers.get('Connection', '').split(',') if h.strip()}
+                resp_skip = HOP_BY_HOP | _connection_tokens(resp.headers)
                 for k, v in resp.headers.items():
                     if k.lower() not in resp_skip:
                         self.send_header(k, v)
@@ -108,7 +133,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except urllib.error.HTTPError as e:
             body = e.read()
             self.send_response(e.code)
-            err_skip = HOP_BY_HOP | {h.strip().lower() for h in (e.headers.get('Connection', '') if e.headers else '').split(',') if h.strip()}
+            err_skip = HOP_BY_HOP | (_connection_tokens(e.headers) if e.headers else set())
             for k, v in e.headers.items():
                 if k.lower() not in err_skip:
                     self.send_header(k, v)
@@ -133,4 +158,4 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-http.server.ThreadingHTTPServer(('0.0.0.0', 8600), Handler).serve_forever()
+http.server.ThreadingHTTPServer(('0.0.0.0', 8601), Handler).serve_forever()

@@ -105,13 +105,16 @@ class _RateLimitMiddleware:
         # Cf-Connecting-Ip is set by the Cloudflare edge and forwarded by
         # cloudflared; behind the tunnel it cannot be spoofed by clients.
         # serve.py deliberately strips X-Forwarded-For (Cloudflare preserves
-        # and appends, so every hop in it is client-influenced). When neither
-        # header is present the request arrived directly (local tests), so
-        # fall back to the peer address.
+        # and appends, so every hop in it is client-influenced). Loopback
+        # requests are serve.py itself or local tests, so a supplied header
+        # is trusted from them; ufw blocks all external direct ingress to
+        # this listener, so a spoofed header would have to arrive through
+        # the tunnel, where Cloudflare overwrites it.
         cf_ip = headers.get(b"cf-connecting-ip", b"").decode().strip()
-        if cf_ip:
+        peer = scope.get("client", ("unknown", 0))[0]
+        if cf_ip and peer in ("127.0.0.1", "::1"):
             return cf_ip
-        return scope.get("client", ("unknown", 0))[0]
+        return peer
 
     def _allow(self, ip: str) -> tuple[bool, int]:
         now = time.monotonic()
