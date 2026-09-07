@@ -14,11 +14,14 @@ nondestructive, all on-device. No uploads, no server, no accounts.
   reposition, resize boxes from their corner handles, adjust its effect
   (mosaic / blur) and strength, or delete it
 - creating a box or freehand censor returns to move mode automatically
+- keyboard shortcuts: M = box, V = move, B = brush, [ / ] = effect strength
 - undo and redo controls cover edits to censor objects
+- opening a new image asks for confirmation when edit history would be lost
+- closing or reloading the tab warns when edit history would be lost
 - strength is **per object**: mosaic = square cell size from 1×1 to 64×64 pixels,
   blur = radius in pixels
 - pinch to zoom, two-finger / move-mode drag to pan
-- **save** renders the full-resolution result to a PNG (original stays untouched)
+- copy or save the full-resolution result as a PNG (original stays untouched)
 - installable (Add to Home Screen), works offline after first visit
 
 ## privacy

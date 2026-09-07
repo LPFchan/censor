@@ -313,6 +313,10 @@ function restoreHistory(index) {
   syncHistoryUI();
 }
 
+function hasEditHistory() {
+  return history.some(snapshot => snapshot !== history[0]);
+}
+
 function syncHistoryUI() {
   $('btnUndo').disabled = historyIndex <= 0;
   $('btnRedo').disabled = historyIndex < 0 || historyIndex >= history.length - 1;
@@ -675,6 +679,7 @@ $('btnClear').addEventListener('click', () => {
 });
 
 $('btnNew').addEventListener('click', () => {
+  if (hasEditHistory() && !confirm('Open a new image? Your current edits and undo history will be lost.')) return;
   document.body.classList.remove('editing');
   state.img = null; state.objects = []; state.selected = null;
   resetHistory();
@@ -682,14 +687,42 @@ $('btnNew').addEventListener('click', () => {
 
 /* ---------- export ---------- */
 
-$('btnSave').addEventListener('click', () => {
-  if (!state.img) return;
+function renderOutputBlob() {
   const out = document.createElement('canvas');
   out.width = state.iw; out.height = state.ih;
   const c = out.getContext('2d');
   c.drawImage(state.img, 0, 0);
   for (const obj of state.objects) drawEffect(c, obj);
-  out.toBlob(async (blob) => {
+  return new Promise((resolve, reject) => {
+    out.toBlob(blob => blob ? resolve(blob) : reject(new Error('Could not render image.')), 'image/png');
+  });
+}
+
+$('btnCopy').addEventListener('click', async () => {
+  if (!state.img) return;
+  if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+    alert('Copying images is not supported in this browser.');
+    return;
+  }
+  try {
+    // Give Safari the clipboard write during the click itself while the PNG
+    // continues rendering through the promise.
+    await navigator.clipboard.write([
+      new ClipboardItem({ 'image/png': renderOutputBlob() }),
+    ]);
+    const button = $('btnCopy');
+    button.classList.add('copied');
+    $('copyStatus').textContent = 'Output image copied to clipboard.';
+    setTimeout(() => button.classList.remove('copied'), 1200);
+  } catch (err) {
+    alert('Could not copy the image. Check clipboard permission and try again.');
+  }
+});
+
+$('btnSave').addEventListener('click', async () => {
+  if (!state.img) return;
+  try {
+    const blob = await renderOutputBlob();
     const name = 'censored-' + Date.now() + '.png';
     const file = new File([blob], name, { type: 'image/png' });
     // on mobile, sharing drops the image straight into Photos/Files
@@ -706,10 +739,28 @@ $('btnSave').addEventListener('click', () => {
     a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  }, 'image/png');
+  } catch (err) {
+    alert('Could not save the image.');
+  }
 });
 
 /* ---------- keyboard (desktop nicety) ---------- */
+
+function adjustIntensity(delta) {
+  const obj = state.objects.find(o => o.id === state.selected);
+  if (obj) {
+    const next = clamp(obj.intensity + delta, obj.effect === 'blur' ? 2 : 1, obj.effect === 'blur' ? 80 : 64);
+    if (next === obj.intensity) return;
+    obj.intensity = next;
+    syncSelUI(obj);
+    requestRender();
+    commitHistory();
+    return;
+  }
+
+  state.intensity = clamp(state.intensity + delta, state.mode === 'blur' ? 2 : 1, state.mode === 'blur' ? 80 : 64);
+  syncNewUI();
+}
 
 window.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
@@ -722,6 +773,20 @@ window.addEventListener('keydown', (e) => {
     restoreHistory(historyIndex + 1);
     e.preventDefault();
     return;
+  }
+  if (state.img && !mod && !e.altKey) {
+    const tools = { m: 'rect', v: 'move', b: 'pen' };
+    const tool = tools[e.key.toLowerCase()];
+    if (tool) {
+      setTool(tool);
+      e.preventDefault();
+      return;
+    }
+    if (e.key === '[' || e.key === ']') {
+      adjustIntensity(e.key === '[' ? -1 : 1);
+      e.preventDefault();
+      return;
+    }
   }
   if (e.key === ' ') { state.space = true; e.preventDefault(); }
   if ((e.key === 'Delete' || e.key === 'Backspace') && state.selected) {
@@ -749,6 +814,12 @@ canvas.addEventListener('wheel', (e) => {
 
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+window.addEventListener('beforeunload', (e) => {
+  if (!state.img || !hasEditHistory()) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
 
 // kill double-tap-to-zoom on UI chrome (iOS ignores user-scalable=no):
 // swallow the second tap of any rapid pair outside the canvas

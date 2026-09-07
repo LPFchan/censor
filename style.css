@@ -25,6 +25,11 @@ button {
   user-select: none; -webkit-user-select: none;
 }
 
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
 input[type='range'], label { touch-action: manipulation; }
 
 /* ---------- landing ---------- */
@@ -154,7 +159,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 #toolbar button {
-  width: clamp(29px, calc((100vw - 49px) / 9), 46px); height: 44px; border-radius: 11px;
+  width: clamp(27px, calc((100vw - 55px) / 10), 46px); height: 44px; border-radius: 11px;
   display: grid; place-items: center;
   color: var(--dim);
 }
@@ -167,6 +172,7 @@ input[type="range"]::-moz-range-thumb {
 
 #toolbar .save { background: var(--accent); color: #fff; border-radius: 12px; }
 #toolbar .save:active { transform: scale(.95); }
+#toolbar .copy.copied { color: #30d158; background: rgba(48,209,88,.14); }
 
 @media (min-width: 700px) {
   .bar { left: 50%; right: auto; transform: translateX(-50%); width: min(480px, calc(100% - 24px)); }

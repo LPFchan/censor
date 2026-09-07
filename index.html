@@ -70,13 +70,13 @@
   </div>
 
   <nav id="toolbar">
-    <button data-tool="rect" class="on" title="box">
+    <button data-tool="rect" class="on" title="box (M)" aria-keyshortcuts="M">
       <svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3"/></svg>
     </button>
-    <button data-tool="pen" title="freehand">
+    <button data-tool="pen" title="freehand (B)" aria-keyshortcuts="B">
       <svg viewBox="0 0 24 24"><path d="M4 18 C 8 8, 12 20, 16 10 S 20 6, 20 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
     </button>
-    <button data-tool="move" title="pan / move objects">
+    <button data-tool="move" title="pan / move objects (V)" aria-keyshortcuts="V">
       <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
     </button>
     <span class="divider"></span>
@@ -97,9 +97,13 @@
       <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8.5v7M8.5 12h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
     </button>
     <span class="divider"></span>
+    <button id="btnCopy" class="copy" title="copy output image" aria-label="copy output image">
+      <svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
     <button id="btnSave" class="save" title="save image">
       <svg viewBox="0 0 24 24"><path d="M12 4v11M12 15l-4-4M12 15l4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
+    <span id="copyStatus" class="sr-only" role="status" aria-live="polite"></span>
   </nav>
 </main>
 
