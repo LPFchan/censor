@@ -63,8 +63,7 @@ $('file').addEventListener('change', async (e) => {
   e.target.value = '';
 });
 
-const landing = $('landing');
-let landingDragDepth = 0;
+let fileDragDepth = 0;
 
 function isImageFile(file) {
   return file.type.startsWith('image/') || /\.(avif|bmp|gif|heic|heif|jpe?g|png|webp)$/i.test(file.name);
@@ -75,35 +74,44 @@ function isFileDrag(e) {
     [...(e.dataTransfer?.items || [])].some(item => item.kind === 'file');
 }
 
-landing.addEventListener('dragenter', (e) => {
+function clearFileDrag() {
+  fileDragDepth = 0;
+  document.body.classList.remove('file-dragging');
+}
+
+window.addEventListener('dragenter', (e) => {
   if (!isFileDrag(e)) return;
   e.preventDefault();
-  landingDragDepth++;
-  landing.classList.add('dragging');
+  fileDragDepth++;
+  document.body.classList.add('file-dragging');
 });
 
-landing.addEventListener('dragover', (e) => {
+window.addEventListener('dragover', (e) => {
   if (!isFileDrag(e)) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = 'copy';
 });
 
-landing.addEventListener('dragleave', () => {
-  landingDragDepth = Math.max(0, landingDragDepth - 1);
-  if (!landingDragDepth) landing.classList.remove('dragging');
+window.addEventListener('dragleave', () => {
+  fileDragDepth = Math.max(0, fileDragDepth - 1);
+  if (!fileDragDepth) clearFileDrag();
 });
 
-landing.addEventListener('drop', async (e) => {
-  landingDragDepth = 0;
-  landing.classList.remove('dragging');
+window.addEventListener('drop', async (e) => {
+  clearFileDrag();
   e.preventDefault();
   const image = [...e.dataTransfer.files].find(isImageFile);
   if (!image) {
-    setLoadStatus('Drop an image file here.');
+    if (state.img) alert('Drop an image file here.');
+    else setLoadStatus('Drop an image file here.');
     return;
   }
+  if (state.img && hasEditHistory() &&
+      !confirm('Replace the current image? Your current edits and undo history will be lost.')) return;
   await loadImage(image);
 });
+
+window.addEventListener('dragend', clearFileDrag);
 
 window.addEventListener('paste', async (e) => {
   if (document.body.classList.contains('editing')) return;

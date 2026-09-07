@@ -9,7 +9,7 @@ nondestructive, all on-device. No uploads, no server, no accounts.
 
 - **box tool** — drag to draw a rectangular censor region
 - **freehand tool** — scribble to censor arbitrary shapes (adjustable brush size)
-- load an image with the file picker, drag and drop, Cmd/Ctrl+V, or the clipboard button
+- load an image with the file picker, drag it onto any screen, Cmd/Ctrl+V, or the clipboard button
 - every censor is an **object**: tap it in move mode to select, drag to
   reposition, resize boxes from their corner handles, adjust its effect
   (mosaic / blur) and strength, or delete it

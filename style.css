@@ -32,6 +32,21 @@ button {
 
 input[type='range'], label { touch-action: manipulation; }
 
+body::after {
+  content: 'drop image to open';
+  position: fixed; inset: 16px; z-index: 100;
+  display: grid; place-items: center;
+  color: var(--text); background: rgba(20,20,23,.9);
+  border: 2px dashed var(--accent); border-radius: 20px;
+  font-size: 20px; font-weight: 600;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .12s ease, visibility 0s linear .12s;
+}
+body.file-dragging::after {
+  opacity: 1; visibility: visible;
+  transition-delay: 0s;
+}
+
 /* ---------- landing ---------- */
 
 #landing {
@@ -39,16 +54,6 @@ input[type='range'], label { touch-action: manipulation; }
   display: flex; align-items: center; justify-content: center;
   text-align: center; padding: 24px;
 }
-#landing::after {
-  content: 'drop image to open';
-  position: absolute; inset: 16px;
-  display: grid; place-items: center;
-  color: var(--text); background: rgba(20,20,23,.9);
-  border: 2px dashed var(--accent); border-radius: 20px;
-  font-size: 20px; font-weight: 600;
-  opacity: 0; pointer-events: none; transition: opacity .12s ease;
-}
-#landing.dragging::after { opacity: 1; }
 body.editing #landing { display: none; }
 
 .landing-inner .mark {
