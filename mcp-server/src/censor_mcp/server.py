@@ -105,14 +105,15 @@ class _RateLimitMiddleware:
         # Cf-Connecting-Ip is set by the Cloudflare edge and forwarded by
         # cloudflared; behind the tunnel it cannot be spoofed by clients.
         # serve.py deliberately strips X-Forwarded-For (Cloudflare preserves
-        # and appends, so every hop in it is client-influenced). Loopback
-        # requests are serve.py itself or local tests, so a supplied header
-        # is trusted from them; ufw blocks all external direct ingress to
-        # this listener, so a spoofed header would have to arrive through
-        # the tunnel, where Cloudflare overwrites it.
+        # and appends, so every hop in it is client-influenced). The header
+        # is only honored from the two peers that can legitimately carry it:
+        # loopback (local tests) and the Docker bridge gateway (serve.py's
+        # proxied requests, which is how all tunnel traffic arrives). ufw
+        # blocks external direct ingress to this listener.
         cf_ip = headers.get(b"cf-connecting-ip", b"").decode().strip()
         peer = scope.get("client", ("unknown", 0))[0]
-        if cf_ip and peer in ("127.0.0.1", "::1"):
+        trusted = {"127.0.0.1", "::1", os.environ.get("TRUSTED_PROXY_IP", "172.30.0.1")}
+        if cf_ip and peer in trusted:
             return cf_ip
         return peer
 
@@ -154,8 +155,13 @@ class _RateLimitMiddleware:
 
 
 # Image decode + effects are CPU-bound, so run them off the event loop.
-# 2 workers is plenty for a lax-rate-limited single VPS.
-_pool = ThreadPoolExecutor(max_workers=int(os.environ.get("CENSOR_WORKERS", "2")))
+_pool = ThreadPoolExecutor(max_workers=int(os.environ.get("CENSOR_WORKERS", "1")))
+
+# Bound admitted work: without this, a burst of large uploads (each up to
+# ~40 MB of base64) sits in the executor's unbounded queue and can exceed
+# the container's memory limit before any rate limit trips. Extra calls get
+# a fast 503-style error instead of queueing.
+_admission = threading.BoundedSemaphore(int(os.environ.get("CENSOR_MAX_INFLIGHT", "2")))
 
 
 def _process(image_b64: str | None, image_url: str | None, regions: list[dict],
@@ -252,13 +258,18 @@ async def censor_image(
         for r in regions
     ]
 
-    loop = asyncio.get_running_loop()
+    if not _admission.acquire(blocking=False):
+        raise ValueError("server is busy processing other images; try again in a few seconds")
     try:
-        b64, fmt, width, height = await loop.run_in_executor(
-            _pool, _process, image_b64, image_url, regions, output_format
-        )
-    except CensorError as e:
-        raise ValueError(str(e)) from None
+        loop = asyncio.get_running_loop()
+        try:
+            b64, fmt, width, height = await loop.run_in_executor(
+                _pool, _process, image_b64, image_url, regions, output_format
+            )
+        except CensorError as e:
+            raise ValueError(str(e)) from None
+    finally:
+        _admission.release()
 
     meta = (
         f"Censored {len(regions)} region(s) on a {width}x{height} image; "
@@ -284,11 +295,16 @@ async def get_image_info(
     Call this first when you only have the image and need to plan censor_image
     regions in real pixel coordinates. Nothing is stored.
     """
-    loop = asyncio.get_running_loop()
+    if not _admission.acquire(blocking=False):
+        raise ValueError("server is busy processing other images; try again in a few seconds")
     try:
-        img, fmt = await loop.run_in_executor(_pool, decode_image, image_b64, image_url)
-    except CensorError as e:
-        raise ValueError(str(e)) from None
+        loop = asyncio.get_running_loop()
+        try:
+            img, fmt = await loop.run_in_executor(_pool, decode_image, image_b64, image_url)
+        except CensorError as e:
+            raise ValueError(str(e)) from None
+    finally:
+        _admission.release()
     return {"width": img.width, "height": img.height, "format": fmt}
 
 

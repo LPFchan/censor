@@ -86,8 +86,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # one byte every few seconds must not hold this thread forever.
         # Reads go through rfile (the buffered reader parse_request already
         # used) because a raw socket recv() would block on bytes rfile has
-        # already swallowed into its buffer; each bounded read gets a short
-        # socket timeout so the deadline is actually checkable.
+        # already swallowed into its buffer. read1() performs at most one
+        # underlying socket read per call, so the deadline is rechecked
+        # between actual reads instead of being unreachable inside a long
+        # buffered read().
         raw = None
         if length:
             deadline = time.monotonic() + UPLOAD_TIMEOUT
@@ -98,7 +100,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     if left <= 0:
                         return  # too slow overall; drop the thread
                     self.connection.settimeout(min(5, left))
-                    part = self.rfile.read(min(1 << 20, remaining))
+                    part = self.rfile.read1(min(1 << 20, remaining))
                     if not part:
                         return  # client went away mid-upload
                     chunks.append(part)
@@ -108,6 +110,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             finally:
                 self.connection.settimeout(None)
             raw = b''.join(chunks)
+            if time.monotonic() > deadline:
+                return  # finished just past the deadline; drop it
         extra_hop = _connection_tokens(self.headers)
         skip = HOP_BY_HOP | extra_hop
         # X-Forwarded-For is client-spoofable (Cloudflare preserves and

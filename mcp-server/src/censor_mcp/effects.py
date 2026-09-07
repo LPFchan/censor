@@ -36,6 +36,11 @@ MOSAIC_MIN, MOSAIC_MAX = 1, 64  # square cell side in px, same as the app's slid
 # crop rather than the full image. This keeps peak memory independent of how
 # small the censored area is relative to the whole picture.
 def _pad_for(effect: str, strength: int) -> int:
+    # Mosaic needs a pad of at least one full cell beyond the anchor-margin
+    # so cells straddling the crop edge still average complete source
+    # pixels; 5 cells covers the worst alignment case with room to spare.
+    if effect == "mosaic":
+        return 5 * max(MOSAIC_MIN, round(strength)) + 16
     return 4 * strength + 16
 
 
@@ -106,33 +111,36 @@ def _resample():
     return f.BILINEAR, f.NEAREST
 
 
-def _blur_layer(img: Image.Image, intensity: int) -> Image.Image:
+def _blur_layer(img: Image.Image, intensity: int, gx: int = 0, gy: int = 0) -> Image.Image:
     # Port of the app's blur: for large radii the browser blurs a downscaled
     # scratch image and stretches it back, which is visually equivalent to a
-    # full-size blur. GaussianBlur needs no such trick, but we keep the
-    # downscale for large radii to stay fast on big images.
+    # full-size blur. The downscale is anchored to the image-origin grid
+    # (offset by gx/gy) so cell samples do not shift with crop position.
     scale = min(8, 2 ** max(0, math.ceil(math.log2(intensity / 4)))) if intensity > 4 else 1
     bilinear, _ = _resample()
     if scale > 1:
-        small = img.resize(
-            (max(1, math.ceil(img.width / scale)), max(1, math.ceil(img.height / scale))),
-            bilinear,
-        )
+        ax0 = (gx // scale) * scale
+        ay0 = (gy // scale) * scale
+        nx = max(1, math.ceil((gx - ax0 + img.width) / scale))
+        ny = max(1, math.ceil((gy - ay0 + img.height) / scale))
+        small = img.resize((nx, ny), bilinear)
         small = small.filter(ImageFilter.GaussianBlur(intensity / scale))
-        return small.resize(img.size, bilinear)
+        big = small.resize((nx * scale, ny * scale), bilinear)
+        ox, oy = gx - ax0, gy - ay0
+        return big.crop((ox, oy, ox + img.width, oy + img.height))
     return img.filter(ImageFilter.GaussianBlur(intensity))
 
 
-def _mosaic_chunk(img: Image.Image, intensity: int, ox: int, oy: int) -> Image.Image:
+def _mosaic_chunk(img: Image.Image, intensity: int, gx: int, gy: int) -> Image.Image:
     # Mosaic one crop of the source while keeping cell boundaries on the
-    # FULL-IMAGE grid, like the browser. Cells that straddle the crop edge
-    # keep their full-image average, so the crop must cover every whole cell
-    # it touches (the caller's padding guarantees this).
+    # FULL-IMAGE grid, like the browser. gx/gy is the crop's origin in
+    # full-image coordinates; the reduced image is anchored to the enclosing
+    # cell boundary (the caller's padding must cover straddling cells).
     cell = max(MOSAIC_MIN, round(intensity))
     bilinear, nearest = _resample()
-    cx0 = (ox // cell) * cell
-    cy0 = (oy // cell) * cell
-    ox_rel, oy_rel = ox - cx0, oy - cy0
+    ax0 = (gx // cell) * cell
+    ay0 = (gy // cell) * cell
+    ox_rel, oy_rel = gx - ax0, gy - ay0
     nx = max(1, math.ceil((ox_rel + img.width) / cell))
     ny = max(1, math.ceil((oy_rel + img.height) / cell))
     small = img.resize((nx, ny), bilinear)
@@ -196,44 +204,83 @@ def censor(img: Image.Image, regions: list[dict]) -> Image.Image:
     for r in _normalize_regions(img, regions):
         x0, y0, x1, y1 = r["box"]
         pad = _pad_for(r["effect"], r["strength"])
-        bw = int(math.ceil(x1)) - int(math.floor(x0))
-        bh = int(math.ceil(y1)) - int(math.floor(y0))
-        if bw * bh > CHUNK_PIXELS:
-            # A region covering a large image would need full-size transient
-            # buffers. Process it in horizontal chunks instead: each chunk is
-            # independently padded, effects stay local, and the mosaic helper
-            # keeps cells on the full-image grid so chunks join seamlessly.
+        vx0, vy0 = max(0.0, x0), max(0.0, y0)
+        vx1, vy1 = min(float(img.width), x1), min(float(img.height), y1)
+        bw = int(math.ceil(vx1)) - int(math.floor(vx0))
+        bh = int(math.ceil(vy1)) - int(math.floor(vy0))
+        # Mosaic always samples the pre-region image, so chunked and
+        # unchunked passes average identical pixels (blur may deepen across
+        # overlapping regions; mosaic must not double-sample).
+        mosaic_source = out.copy() if r["effect"] == "mosaic" else out
+        if bw * bh > CHUNK_PIXELS and bh > 1:
+            # A large visible area would need full-size transient buffers, so
+            # process it in horizontal chunks. Masks always use the ORIGINAL
+            # region geometry (never the chunk's), and every chunk reads from
+            # a pre-region snapshot, so chunks join seamlessly and ordering
+            # cannot leak already-filtered pixels into a later chunk.
+            snapshot = out.copy()
             rows = max(1, CHUNK_PIXELS // max(1, bw))
-            y = int(math.floor(y0))
-            while y < int(math.ceil(y1)):
-                _apply_region(out, x0, float(y), x1, min(float(y + rows), y1),
-                              r, pad, img.size)
+            y = int(math.floor(vy0))
+            yend = int(math.ceil(vy1))
+            while y < yend:
+                write = (x0, float(y), x1, min(float(y + rows), vy1))
+                _apply_region(out, snapshot, mosaic_source, (x0, y0, x1, y1), write, r, pad, img.size)
                 y += rows
         else:
-            _apply_region(out, x0, y0, x1, y1, r, pad, img.size)
+            _apply_region(out, out, mosaic_source, (x0, y0, x1, y1), (x0, y0, x1, y1), r, pad, img.size)
     return out
 
 
-def _apply_region(out: Image.Image, x0: float, y0: float, x1: float, y1: float,
+def _apply_region(out: Image.Image, blur_source: Image.Image, mosaic_source: Image.Image,
+                  region: tuple[float, float, float, float],
+                  write: tuple[float, float, float, float],
                   r: dict, pad: int, size: tuple[int, int]) -> None:
     width, height = size
+    x0, y0, x1, y1 = region      # original geometry: masks and ellipse shape
+    wx0, wy0, wx1, wy1 = write   # this chunk's write window
     # Work on a padded crop of the current output: effects bleed past their
     # region, and cropping keeps peak memory proportional to the censored
-    # area. Running on "out" (not the original) means overlapping regions
-    # deepen censorship instead of resetting it. The pad exceeds the maximum
-    # effect bleed, so chunk boundaries are invisible.
-    cx0 = max(0, int(math.floor(x0)) - pad)
-    cy0 = max(0, int(math.floor(y0)) - pad)
-    cx1 = min(width, int(math.ceil(x1)) + pad)
-    cy1 = min(height, int(math.ceil(y1)) + pad)
-    crop = out.crop((cx0, cy0, cx1, cy1))
-    if r["effect"] == "blur":
-        layer = _blur_layer(crop, r["strength"])
+    # area. Blur reads blur_source ("out" unchunked, so overlapping regions
+    # deepen; a pre-region snapshot when chunked, so chunk order cannot leak
+    # filtered pixels). Mosaic always reads mosaic_source: its cells must
+    # sample the pre-region image in BOTH modes, or chunked and unchunked
+    # passes would average different pixels.
+    # Mosaic crops are expanded to whole cells on the global image grid.
+    # The mosaic pad always covers more than one cell, so every cell that
+    # straddles the crop edge still averages complete source pixels, and the
+    # cell samples match an uncropped pass wherever both overlap.
+    if r["effect"] == "mosaic":
+        cell = max(MOSAIC_MIN, round(r["strength"]))
+        cand_x = max(0, int(math.floor(wx0)) - pad)
+        cand_y = max(0, int(math.floor(wy0)) - pad)
+        gx0 = (cand_x // cell) * cell
+        gy0 = (cand_y // cell) * cell
     else:
+        gx0 = max(0, int(math.floor(wx0)) - pad)
+        gy0 = max(0, int(math.floor(wy0)) - pad)
+    cx0, cy0 = gx0, gy0
+    cx1 = min(width, int(math.ceil(wx1)) + pad)
+    cy1 = min(height, int(math.ceil(wy1)) + pad)
+    if cx1 <= cx0 or cy1 <= cy0:
+        return  # write window is entirely off-image
+    if r["effect"] == "blur":
+        crop = blur_source.crop((cx0, cy0, cx1, cy1))
+        layer = _blur_layer(crop, r["strength"], cx0, cy0)
+    else:
+        crop = mosaic_source.crop((cx0, cy0, cx1, cy1))
         layer = _mosaic_chunk(crop, r["strength"], cx0, cy0)
     if r["shape"] == "ellipse":
         mask = _ellipse_mask(crop.size, x0 - cx0, y0 - cy0, x1 - x0, y1 - y0)
+        # Chunked writes must not paint outside this chunk's window, or the
+        # next chunk (reading the pre-region snapshot) would overwrite them.
+        clip = Image.new("L", crop.size, 0)
+        ImageDraw.Draw(clip).rectangle(
+            (max(x0, wx0) - cx0, max(y0, wy0) - cy0,
+             min(x1, wx1) - cx0, min(y1, wy1) - cy0), fill=255)
+        mask = Image.composite(mask, Image.new("L", crop.size, 0), clip)
     else:
         mask = Image.new("L", crop.size, 0)
-        ImageDraw.Draw(mask).rectangle((x0 - cx0, y0 - cy0, x1 - cx0, y1 - cy0), fill=255)
+        ImageDraw.Draw(mask).rectangle(
+            (max(x0, wx0) - cx0, max(y0, wy0) - cy0,
+             min(x1, wx1) - cx0, min(y1, wy1) - cy0), fill=255)
     out.paste(layer, (cx0, cy0), mask)
