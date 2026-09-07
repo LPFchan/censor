@@ -3,8 +3,10 @@ services:
     build: .
     container_name: censor-mcp
     user: "1000:1000"
-    mem_limit: 512m
-    memswap_limit: 512m
+    # Worst-case heap is ~500 MiB (2 admitted max-size calls: 4 rasters +
+    # chunks + retained input bytes each); 768m leaves allocator headroom.
+    mem_limit: 768m
+    memswap_limit: 768m
     oom_score_adj: 500
     restart: unless-stopped
     read_only: true            # privacy: the app never touches disk anyway

@@ -4,6 +4,7 @@ import asyncio
 import fnmatch
 import math
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -171,15 +172,36 @@ class _AdmissionMiddleware:
 
     The raw Content-Length is also capped far below the proxy's generous
     45 MB: a legitimate call is one image (~40 MB of base64) plus small
-    JSON. Without this, the regions array alone could carry millions of tiny
-    objects — cheap as JSON, ruinous once the transport materializes them as
-    Python dicts, before any tool-level validation runs.
+    JSON. Byte size alone does not bound JSON expansion — millions of tiny
+    region objects fit within 25 MB but materialize as hundreds of MiB of
+    Python dicts — so the buffered body gets ONE structural scan: strip the
+    single largest string literal (the image payload, legitimately huge) and
+    reject if the remaining JSON exceeds a small cap. Bytes are discarded
+    before the app ever parses them. The scan is a deliberately crude regex;
+    false positives only reject, and a real image string is always the
+    largest string in an honest request.
     """
 
     def __init__(self, app, limit: int):
         self.app = app
         self.semaphore = threading.BoundedSemaphore(limit)
         self.exempt_paths = {"/healthz", "/.well-known/mcp/server-card.json"}
+        # One pass over the body, capturing group 1 as the longest string
+        # content. Regex backtracking cost is bounded by the string length,
+        # and the body is already byte-capped at MAX_MCP_BODY.
+        self._string_re = re.compile(rb'"((?:[^"\\]|\\.)*)"')
+
+    def _strip_largest_string(self, body: bytes) -> bytes:
+        best = None
+        best_span = None
+        for m in self._string_re.finditer(body):
+            size = len(m.group(1))
+            if best is None or size > best:
+                best = size
+                best_span = m.span(1)
+        if best_span is None:
+            return body
+        return body[: best_span[0]] + body[best_span[1]:]
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or scope.get("path", "") in self.exempt_paths:
@@ -207,6 +229,50 @@ class _AdmissionMiddleware:
             })
             await send({"type": "http.response.body", "body": body})
             return
+        if length > 0:
+            # Buffer and structurally screen the body BEFORE the app parses
+            # it. Any failure to read the declared length promptly rejects;
+            # the permit is still released in the finally below.
+            chunks = []
+            remaining = length
+            while remaining > 0:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    self.semaphore.release()
+                    return
+                chunk = message.get("body", b"")
+                chunks.append(chunk)
+                remaining -= len(chunk)
+                if not message.get("more_body", False):
+                    break
+            raw = b"".join(chunks)
+            # Streaming GC during this scan keeps live memory at roughly ONE
+            # body copy: the stripped (image-free) bytes replace the raw
+            # buffer as soon as they exist, instead of both peaking together.
+            structural = self._strip_largest_string(raw)
+            oversized = remaining > 0 or len(structural) > MAX_JSON_NON_IMAGE
+            del structural
+            if oversized:
+                del raw
+                self.semaphore.release()
+                body = b'{"error":"request rejected: too much non-image JSON"}'
+                await send({
+                    "type": "http.response.start",
+                    "status": 413,
+                    "headers": [(b"content-type", b"application/json")],
+                })
+                await send({"type": "http.response.body", "body": body})
+                return
+            delivered = False
+
+            async def replay():
+                nonlocal delivered
+                if not delivered:
+                    delivered = True
+                    return {"type": "http.request", "body": raw, "more_body": False}
+                return await receive()
+
+            receive = replay
         try:
             await self.app(scope, receive, send)
         finally:
@@ -228,6 +294,13 @@ _admission = threading.BoundedSemaphore(int(os.environ.get("CENSOR_MAX_INFLIGHT"
 # One image is ~40 MB of base64; anything past it in a single JSON-RPC body
 # is regions-shaped attack surface, not a legitimate request.
 MAX_MCP_BODY = int(os.environ.get("CENSOR_MAX_BODY", "41_000_000"))
+
+# Cap on JSON bytes EXCLUDING the single largest string literal (the image
+# payload). A legitimate call needs one envelope, one params object, and at
+# most 64 small region objects; kilobytes, not megabytes. Enforced on the
+# buffered body in _AdmissionMiddleware before any JSON parser runs, so
+# region-shaped structure cannot expand into Python objects first.
+MAX_JSON_NON_IMAGE = int(os.environ.get("CENSOR_MAX_JSON_NON_IMAGE", "262144"))
 
 
 def _process(image_b64: str | None, image_url: str | None, regions: list[dict],

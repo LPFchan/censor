@@ -26,11 +26,18 @@ MAX_BASE64_CHARS = 40_000_000  # ~30 MB of image data once decoded
 MAX_REGION_COORD = 100_000     # geometry beyond this is nonsense and only
                                # feeds Pillow's rasterizer pointless work
 
-# Regions bigger than this are processed in horizontal chunks so transient
-# buffers stay small no matter how large the censored area is. Sized so a
-# worst-case chunk (full 8192px width, ~240 padded rows, strength-64 mosaic)
-# keeps source + grid + output under ~25 MiB.
-CHUNK_PIXELS = 1_000_000
+# Chunking threshold AND the cap on padded chunk dimensions. A chunk's write
+# area never exceeds 64 rows; padding (max 336px per side) then bounds the
+# processed crop at 8192 x 736, so source + grid + output stay under ~25 MiB
+# no matter how large the region or image is. Full worst-case budget:
+# 4 image rasters ~192 MiB + chunk ~25 MiB + 2 admitted inputs (raw body +
+# base64 string + decoded bytes, ~230 MiB retained) + interpreter ~50 MiB
+# ~= 500 MiB of heap. The container's memory ceiling is set above this with
+# headroom for allocator overhead; the measured-peak test (2 concurrent
+# max-size calls through the full server) must pass before any sizing
+# change ships.
+CHUNK_PIXELS = 512_000
+CHUNK_MAX_ROWS = 64
 
 BLUR_MIN, BLUR_MAX = 2, 80      # radius in px, same as the app's slider
 MOSAIC_MIN, MOSAIC_MAX = 1, 64  # square cell side in px, same as the app's slider
@@ -224,7 +231,7 @@ def censor(img: Image.Image, regions: list[dict]) -> Image.Image:
             # cannot leak already-filtered pixels into a later chunk. The same
             # snapshot serves both effects, keeping peak rasters at four.
             snapshot = out.copy()
-            rows = max(1, CHUNK_PIXELS // max(1, bw))
+            rows = max(1, min(CHUNK_MAX_ROWS, CHUNK_PIXELS // max(1, bw)))
             y = int(math.floor(vy0))
             yend = int(math.ceil(vy1))
             while y < yend:
