@@ -63,6 +63,48 @@ $('file').addEventListener('change', async (e) => {
   e.target.value = '';
 });
 
+const landing = $('landing');
+let landingDragDepth = 0;
+
+function isImageFile(file) {
+  return file.type.startsWith('image/') || /\.(avif|bmp|gif|heic|heif|jpe?g|png|webp)$/i.test(file.name);
+}
+
+function isFileDrag(e) {
+  return [...(e.dataTransfer?.types || [])].includes('Files') ||
+    [...(e.dataTransfer?.items || [])].some(item => item.kind === 'file');
+}
+
+landing.addEventListener('dragenter', (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  landingDragDepth++;
+  landing.classList.add('dragging');
+});
+
+landing.addEventListener('dragover', (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+
+landing.addEventListener('dragleave', () => {
+  landingDragDepth = Math.max(0, landingDragDepth - 1);
+  if (!landingDragDepth) landing.classList.remove('dragging');
+});
+
+landing.addEventListener('drop', async (e) => {
+  landingDragDepth = 0;
+  landing.classList.remove('dragging');
+  e.preventDefault();
+  const image = [...e.dataTransfer.files].find(isImageFile);
+  if (!image) {
+    setLoadStatus('Drop an image file here.');
+    return;
+  }
+  await loadImage(image);
+});
+
 window.addEventListener('paste', async (e) => {
   if (document.body.classList.contains('editing')) return;
   const image = [...(e.clipboardData?.items || [])]
