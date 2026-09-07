@@ -151,8 +151,22 @@ $('clipboardOpen').addEventListener('click', async () => {
 $('copyrightYear').textContent = new Date().getFullYear();
 
 const agentOverlay = $('agentOverlay');
-const openAgentDialog = () => { agentOverlay.hidden = false; $('agentCopy').focus(); };
-const closeAgentDialog = () => { agentOverlay.hidden = true; $('agentLink').focus(); };
+const openAgentDialog = () => {
+  agentOverlay.hidden = false;
+  // start hidden, then release to the resting state on the next frame so
+  // the transition actually plays
+  agentOverlay.classList.add('entering');
+  requestAnimationFrame(() => requestAnimationFrame(() => agentOverlay.classList.remove('entering')));
+  $('agentCopy').focus();
+};
+const closeAgentDialog = () => {
+  agentOverlay.classList.add('closing');
+  setTimeout(() => {
+    agentOverlay.classList.remove('closing');
+    agentOverlay.hidden = true;
+  }, 180);
+  $('agentLink').focus();
+};
 
 $('agentLink').addEventListener('click', openAgentDialog);
 $('agentClose').addEventListener('click', closeAgentDialog);
@@ -163,10 +177,15 @@ window.addEventListener('keydown', (e) => {
 
 $('agentCopy').addEventListener('click', async () => {
   const label = $('agentCopyLabel');
+  const btn = $('agentCopy');
   try {
     await navigator.clipboard.writeText($('agentPrompt').textContent);
     label.textContent = t('copiedPrompt');
-    setTimeout(() => { label.textContent = t('copyPrompt'); }, 1600);
+    btn.classList.add('copied');
+    setTimeout(() => {
+      label.textContent = t('copyPrompt');
+      btn.classList.remove('copied');
+    }, 1600);
   } catch (err) {
     // clipboard blocked: select the text so the user can copy it manually
     const range = document.createRange();

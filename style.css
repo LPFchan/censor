@@ -81,13 +81,23 @@ h1 { font-size: 28px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 6px;
   position: fixed; inset: 0; z-index: 200;
   display: grid; place-items: center; padding: 24px;
   background: rgba(20,20,23,.78);
+  opacity: 1; transition: opacity .18s ease;
 }
 .overlay[hidden] { display: none; }
+.overlay.closing { opacity: 0; }
+.overlay.closing .dialog { transform: translateY(8px) scale(.97); opacity: 0; }
 
 .dialog {
   width: min(460px, 100%);
   background: var(--panel); border-radius: var(--radius);
   padding: 20px; box-shadow: 0 12px 40px rgba(0,0,0,.5);
+  transform: translateY(0) scale(1); opacity: 1;
+  transition: transform .18s ease, opacity .18s ease;
+}
+.overlay.entering .dialog { transform: translateY(8px) scale(.97); opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay, .dialog { transition: none; }
 }
 .dialog h2 { margin: 0 0 6px; font-size: 17px; }
 .dialog-sub { margin: 0 0 14px; color: var(--dim); font-size: 13.5px; }
@@ -105,14 +115,19 @@ h1 { font-size: 28px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 6px;
   display: inline-flex; align-items: center; gap: 7px;
   padding: 8px 14px; border-radius: 10px;
   background: var(--accent); color: #fff; font-weight: 600;
+  transition: filter .15s ease, transform .1s ease, background-color .25s ease;
 }
 .copy-btn svg { width: 15px; height: 15px; }
 .copy-btn:hover { filter: brightness(1.1); }
+.copy-btn:active { transform: scale(.96); }
+.copy-btn.copied { background: #30d158; }
 .close-btn {
   padding: 8px 14px; border-radius: 10px;
   background: var(--panel2); color: var(--dim);
+  transition: color .15s ease, transform .1s ease;
 }
 .close-btn:hover { color: var(--text); }
+.close-btn:active { transform: scale(.96); }
 
 .landing-actions {
   display: flex; flex-direction: column; align-items: stretch; gap: 10px;
