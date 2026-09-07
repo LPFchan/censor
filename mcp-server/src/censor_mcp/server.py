@@ -166,8 +166,14 @@ class _AdmissionMiddleware:
     This gate bounds buffered-body memory; the worker semaphore bounds actual
     image-processing work. The two use separate counters so one request never
     acquires both. The limit is sized against worst-case retained bytes:
-    each admitted request can hold a ~45 MB body, and the container must keep
-    total memory under 512 MiB including image rasters.
+    each admitted request can hold a bounded body (see below), and the
+    container must keep total memory under 512 MiB including image rasters.
+
+    The raw Content-Length is also capped far below the proxy's generous
+    45 MB: a legitimate call is one image (~40 MB of base64) plus small
+    JSON. Without this, the regions array alone could carry millions of tiny
+    objects — cheap as JSON, ruinous once the transport materializes them as
+    Python dicts, before any tool-level validation runs.
     """
 
     def __init__(self, app, limit: int):
@@ -178,6 +184,19 @@ class _AdmissionMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or scope.get("path", "") in self.exempt_paths:
             await self.app(scope, receive, send)
+            return
+        try:
+            length = int(dict(scope.get("headers", [])).get(b"content-length", b"0"))
+        except ValueError:
+            length = 0
+        if length > MAX_MCP_BODY:
+            body = b'{"error":"request too large"}'
+            await send({
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [(b"content-type", b"application/json")],
+            })
+            await send({"type": "http.response.body", "body": body})
             return
         if not self.semaphore.acquire(blocking=False):
             body = b'{"error":"server busy, try again in a few seconds"}'
@@ -205,6 +224,10 @@ _pool = ThreadPoolExecutor(max_workers=int(os.environ.get("CENSOR_WORKERS", "1")
 # tool otherwise. Cancellation of the awaiting coroutine never frees a slot
 # while work is still running.
 _admission = threading.BoundedSemaphore(int(os.environ.get("CENSOR_MAX_INFLIGHT", "2")))
+
+# One image is ~40 MB of base64; anything past it in a single JSON-RPC body
+# is regions-shaped attack surface, not a legitimate request.
+MAX_MCP_BODY = int(os.environ.get("CENSOR_MAX_BODY", "41_000_000"))
 
 
 def _process(image_b64: str | None, image_url: str | None, regions: list[dict],
@@ -238,14 +261,17 @@ def _submit(fn, *args):
 
     The caller must already hold _admission. If the executor accepts the job,
     the concurrent Future's done callback releases when the work truly
-    finishes — even if the awaiting coroutine is cancelled meanwhile (the
-    concurrent future keeps running and its callback still fires). If
+    finishes. asyncio.shield() stops a cancelled caller from propagating
+    cancellation into the concurrent future: without it, cancelling a QUEUED
+    job would fire the release callback immediately while the executor work
+    item still retains its image arguments — letting repeated
+    submit-then-cancel accumulate inputs outside the admission count. If
     submission itself fails, the job never runs and the caller releases via
     its not-submitted path instead.
     """
     cf_future = _pool.submit(fn, *args)
     cf_future.add_done_callback(lambda f: _admission.release())
-    return asyncio.wrap_future(cf_future)
+    return asyncio.shield(asyncio.wrap_future(cf_future))
 
 
 _REGION_SCHEMA = {

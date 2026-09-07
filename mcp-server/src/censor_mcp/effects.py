@@ -27,8 +27,10 @@ MAX_REGION_COORD = 100_000     # geometry beyond this is nonsense and only
                                # feeds Pillow's rasterizer pointless work
 
 # Regions bigger than this are processed in horizontal chunks so transient
-# buffers stay small no matter how large the censored area is.
-CHUNK_PIXELS = 4_000_000
+# buffers stay small no matter how large the censored area is. Sized so a
+# worst-case chunk (full 8192px width, ~240 padded rows, strength-64 mosaic)
+# keeps source + grid + output under ~25 MiB.
+CHUNK_PIXELS = 1_000_000
 
 BLUR_MIN, BLUR_MAX = 2, 80      # radius in px, same as the app's slider
 MOSAIC_MIN, MOSAIC_MAX = 1, 64  # square cell side in px, same as the app's slider
