@@ -28,9 +28,25 @@
       <button id="clipboardOpen" class="clipboard-btn" type="button" data-i18n="loadClipboard">load from clipboard</button>
     </div>
     <p id="loadStatus" class="load-status" role="status" aria-live="polite"></p>
-    <p class="tiny" data-i18n="hint">draw boxes or scribble freely · adjust strength per object · drag to reposition</p>
+    <p class="tiny"><button id="agentLink" class="agent-link" type="button" data-i18n="agentLink">point your agent at it →</button></p>
+    <p class="tiny footer">© <span id="copyrightYear">2026</span> <a href="https://lost.plus" class="agent-link">lost.plus</a></p>
   </div>
 </section>
+
+<div id="agentOverlay" class="overlay" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="agentDialogTitle">
+    <h2 id="agentDialogTitle" data-i18n="agentDialogTitle">use censor from your agent</h2>
+    <p class="dialog-sub" data-i18n="agentDialogSub">paste this into your agent to give it image-censoring tools:</p>
+    <pre class="prompt-box"><code id="agentPrompt">Read https://censor.lost.plus/skills/censor-image/SKILL.md and follow it to censor images for me. The MCP endpoint is https://censor.lost.plus/mcp — no auth needed.</code></pre>
+    <div class="dialog-actions">
+      <button id="agentCopy" class="copy-btn" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span id="agentCopyLabel" data-i18n="copyPrompt">copy prompt</span>
+      </button>
+      <button id="agentClose" class="close-btn" type="button" data-i18n="closeDialog">close</button>
+    </div>
+  </div>
+</div>
 
 <main id="editor">
   <div id="stage">

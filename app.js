@@ -147,6 +147,36 @@ $('clipboardOpen').addEventListener('click', async () => {
   }
 });
 
+// --- splash footer + agent prompt dialog ---
+$('copyrightYear').textContent = new Date().getFullYear();
+
+const agentOverlay = $('agentOverlay');
+const openAgentDialog = () => { agentOverlay.hidden = false; $('agentCopy').focus(); };
+const closeAgentDialog = () => { agentOverlay.hidden = true; $('agentLink').focus(); };
+
+$('agentLink').addEventListener('click', openAgentDialog);
+$('agentClose').addEventListener('click', closeAgentDialog);
+agentOverlay.addEventListener('click', (e) => { if (e.target === agentOverlay) closeAgentDialog(); });
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !agentOverlay.hidden) closeAgentDialog();
+});
+
+$('agentCopy').addEventListener('click', async () => {
+  const label = $('agentCopyLabel');
+  try {
+    await navigator.clipboard.writeText($('agentPrompt').textContent);
+    label.textContent = t('copiedPrompt');
+    setTimeout(() => { label.textContent = t('copyPrompt'); }, 1600);
+  } catch (err) {
+    // clipboard blocked: select the text so the user can copy it manually
+    const range = document.createRange();
+    range.selectNodeContents($('agentPrompt'));
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+});
+
 function fitView() {
   const r = stage.getBoundingClientRect();
   const s = Math.min(r.width / state.iw, r.height / state.ih) * 0.98;

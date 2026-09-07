@@ -66,6 +66,54 @@ h1 { font-size: 28px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 6px;
 #landing p { color: var(--dim); margin: 0 0 22px; }
 #landing .tiny { font-size: 12.5px; margin-top: 18px; }
 
+.agent-link {
+  color: var(--dim); font-size: inherit;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.agent-link:hover { color: var(--text); }
+
+#landing .footer { margin-top: 8px; }
+#landing .footer a { color: var(--dim); }
+
+/* ---------- agent prompt dialog ---------- */
+
+.overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: grid; place-items: center; padding: 24px;
+  background: rgba(20,20,23,.78);
+}
+.overlay[hidden] { display: none; }
+
+.dialog {
+  width: min(460px, 100%);
+  background: var(--panel); border-radius: var(--radius);
+  padding: 20px; box-shadow: 0 12px 40px rgba(0,0,0,.5);
+}
+.dialog h2 { margin: 0 0 6px; font-size: 17px; }
+.dialog-sub { margin: 0 0 14px; color: var(--dim); font-size: 13.5px; }
+
+.prompt-box {
+  margin: 0 0 16px; padding: 12px;
+  background: var(--panel2); border-radius: 10px;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap; word-break: break-word;
+  user-select: text; -webkit-user-select: text;
+}
+
+.dialog-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.copy-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 14px; border-radius: 10px;
+  background: var(--accent); color: #fff; font-weight: 600;
+}
+.copy-btn svg { width: 15px; height: 15px; }
+.copy-btn:hover { filter: brightness(1.1); }
+.close-btn {
+  padding: 8px 14px; border-radius: 10px;
+  background: var(--panel2); color: var(--dim);
+}
+.close-btn:hover { color: var(--text); }
+
 .landing-actions {
   display: flex; flex-direction: column; align-items: stretch; gap: 10px;
   width: min(260px, 100%); margin: 0 auto;
