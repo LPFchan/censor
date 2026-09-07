@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="censor">
-<title>censor — blur &amp; mosaic editor</title>
+<title data-i18n="title">censor — blur &amp; mosaic editor</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
@@ -19,16 +19,16 @@
   <div class="landing-inner">
     <img class="mark" src="icons/icon.svg" alt="" aria-hidden="true">
     <h1>censor</h1>
-    <p>blur &amp; pixelate parts of a photo.<br>everything stays on your device.</p>
+    <p><span data-i18n="tagline">blur &amp; pixelate parts of a photo.</span><br><span data-i18n="privacy">everything stays on your device.</span></p>
     <div class="landing-actions">
       <label class="open-btn">
-        open an image
+        <span data-i18n="openImage">open an image</span>
         <input type="file" id="file" accept="image/*">
       </label>
-      <button id="clipboardOpen" class="clipboard-btn" type="button">load from clipboard</button>
+      <button id="clipboardOpen" class="clipboard-btn" type="button" data-i18n="loadClipboard">load from clipboard</button>
     </div>
     <p id="loadStatus" class="load-status" role="status" aria-live="polite"></p>
-    <p class="tiny">draw boxes or scribble freely · adjust strength per object · drag to reposition</p>
+    <p class="tiny" data-i18n="hint">draw boxes or scribble freely · adjust strength per object · drag to reposition</p>
   </div>
 </section>
 
@@ -40,12 +40,12 @@
   <div id="selbar" class="bar">
     <div class="row">
       <div class="seg">
-        <button data-effect="mosaic">mosaic</button>
-        <button data-effect="blur">blur</button>
+        <button data-effect="mosaic" data-i18n="mosaic">mosaic</button>
+        <button data-effect="blur" data-i18n="blur">blur</button>
       </div>
       <span class="spacer"></span>
-      <button id="selDelete" class="danger" title="delete object">✕</button>
-      <button id="selDone" class="primary" title="done">✓</button>
+      <button id="selDelete" class="danger" title="delete object" data-i18n-title="deleteObject">✕</button>
+      <button id="selDone" class="primary" title="done" data-i18n-title="done">✓</button>
     </div>
     <div class="row slider-row">
       <input type="range" id="selIntensity" min="1" max="64" value="32">
@@ -56,57 +56,58 @@
   <div id="newbar" class="bar show">
     <div class="row">
       <div class="seg">
-        <button data-effect="mosaic" class="on">mosaic</button>
-        <button data-effect="blur">blur</button>
+        <button data-effect="mosaic" class="on" data-i18n="mosaic">mosaic</button>
+        <button data-effect="blur" data-i18n="blur">blur</button>
       </div>
       <input type="range" id="newIntensity" min="1" max="64" value="32">
       <span id="newIntVal" class="val">32 × 32px</span>
     </div>
     <div class="row slider-row" id="brushRow">
-      <span class="lbl">brush</span>
+      <span class="lbl" data-i18n="brush">brush</span>
       <input type="range" id="brushSize" min="8" max="200" value="48">
       <span id="brushVal" class="val">48px</span>
     </div>
   </div>
 
   <nav id="toolbar">
-    <button data-tool="rect" class="on" title="box (M)" aria-keyshortcuts="M">
+    <button data-tool="rect" class="on" title="box (M)" aria-keyshortcuts="M" data-i18n-title="boxTool">
       <svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3"/></svg>
     </button>
-    <button data-tool="pen" title="freehand (B)" aria-keyshortcuts="B">
+    <button data-tool="pen" title="freehand (B)" aria-keyshortcuts="B" data-i18n-title="freehandTool">
       <svg viewBox="0 0 24 24"><path d="M4 18 C 8 8, 12 20, 16 10 S 20 6, 20 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
     </button>
-    <button data-tool="move" title="pan / move objects (V)" aria-keyshortcuts="V">
+    <button data-tool="move" title="pan / move objects (V)" aria-keyshortcuts="V" data-i18n-title="moveTool">
       <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
     </button>
     <span class="divider"></span>
-    <button id="btnUndo" title="undo" disabled>
+    <button id="btnUndo" title="undo" data-i18n-title="undo" disabled>
       <svg viewBox="0 0 24 24"><path d="M9 7 4 12l5 5M5 12h8a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
-    <button id="btnRedo" title="redo" disabled>
+    <button id="btnRedo" title="redo" data-i18n-title="redo" disabled>
       <svg viewBox="0 0 24 24"><path d="m15 7 5 5-5 5M19 12h-8a6 6 0 0 0-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <span class="divider"></span>
-    <button id="btnFit" title="fit to screen">
+    <button id="btnFit" title="fit to screen" data-i18n-title="fitScreen">
       <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
-    <button id="btnClear" title="clear all">
+    <button id="btnClear" title="clear all" data-i18n-title="clearAll">
       <svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M8 7l1 13h6l1-13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
-    <button id="btnNew" title="new image">
+    <button id="btnNew" title="new image" data-i18n-title="newImage">
       <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8.5v7M8.5 12h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
     </button>
     <span class="divider"></span>
-    <button id="btnCopy" class="copy" title="copy output image" aria-label="copy output image">
+    <button id="btnCopy" class="copy" title="copy output image" aria-label="copy output image" data-i18n-title="copyOutput">
       <svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
     </button>
-    <button id="btnSave" class="save" title="save image">
+    <button id="btnSave" class="save" title="save image" data-i18n-title="saveImage">
       <svg viewBox="0 0 24 24"><path d="M12 4v11M12 15l-4-4M12 15l4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <span id="copyStatus" class="sr-only" role="status" aria-live="polite"></span>
   </nav>
 </main>
 
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -1,8 +1,9 @@
-const CACHE = 'censor-v12';
+const CACHE = 'censor-v13';
 const ASSETS = [
   './',
   './index.html',
   './style.css',
+  './i18n.js',
   './app.js',
   './manifest.webmanifest',
   './icons/icon.svg',

@@ -33,7 +33,7 @@ button {
 input[type='range'], label { touch-action: manipulation; }
 
 body::after {
-  content: 'drop image to open';
+  content: attr(data-drop-label);
   position: fixed; inset: 16px; z-index: 100;
   display: grid; place-items: center;
   color: var(--text); background: rgba(20,20,23,.9);

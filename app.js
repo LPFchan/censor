@@ -1,6 +1,7 @@
 /* censor — nondestructive blur & mosaic editor */
 
 const MAX_TEX = 4096;
+const { t } = window.i18n;
 
 const state = {
   img: null,            // canvas, full res
@@ -52,7 +53,7 @@ async function loadImage(source) {
     setLoadStatus('');
     return true;
   } catch (err) {
-    setLoadStatus('Could not open that image.');
+    setLoadStatus(t('openFailed'));
     return false;
   }
 }
@@ -102,12 +103,12 @@ window.addEventListener('drop', async (e) => {
   e.preventDefault();
   const image = [...e.dataTransfer.files].find(isImageFile);
   if (!image) {
-    if (state.img) alert('Drop an image file here.');
-    else setLoadStatus('Drop an image file here.');
+    if (state.img) alert(t('dropImageOnly'));
+    else setLoadStatus(t('dropImageOnly'));
     return;
   }
   if (state.img && hasEditHistory() &&
-      !confirm('Replace the current image? Your current edits and undo history will be lost.')) return;
+      !confirm(t('replaceConfirm'))) return;
   await loadImage(image);
 });
 
@@ -119,7 +120,7 @@ window.addEventListener('paste', async (e) => {
     .find(item => item.type.startsWith('image/'))
     ?.getAsFile();
   if (!image) {
-    setLoadStatus('The clipboard does not contain an image.');
+    setLoadStatus(t('clipboardEmpty'));
     return;
   }
   e.preventDefault();
@@ -128,7 +129,7 @@ window.addEventListener('paste', async (e) => {
 
 $('clipboardOpen').addEventListener('click', async () => {
   if (!navigator.clipboard?.read) {
-    setLoadStatus('Clipboard access is unavailable here. Try Cmd/Ctrl+V.');
+    setLoadStatus(t('clipboardUnavailable'));
     return;
   }
   try {
@@ -140,9 +141,9 @@ $('clipboardOpen').addEventListener('click', async () => {
         return;
       }
     }
-    setLoadStatus('The clipboard does not contain an image.');
+    setLoadStatus(t('clipboardEmpty'));
   } catch (err) {
-    setLoadStatus('Clipboard access was blocked. Try Cmd/Ctrl+V.');
+    setLoadStatus(t('clipboardBlocked'));
   }
 });
 
@@ -721,7 +722,7 @@ $('btnRedo').addEventListener('click', () => restoreHistory(historyIndex + 1));
 
 $('btnClear').addEventListener('click', () => {
   if (!state.objects.length) return;
-  if (confirm('remove all ' + state.objects.length + ' censor object' + (state.objects.length > 1 ? 's' : '') + '?')) {
+  if (confirm(t('clearConfirm'))) {
     state.objects = [];
     selectObject(null);
     commitHistory();
@@ -729,7 +730,7 @@ $('btnClear').addEventListener('click', () => {
 });
 
 $('btnNew').addEventListener('click', () => {
-  if (hasEditHistory() && !confirm('Open a new image? Your current edits and undo history will be lost.')) return;
+  if (hasEditHistory() && !confirm(t('newImageConfirm'))) return;
   document.body.classList.remove('editing');
   state.img = null; state.objects = []; state.selected = null;
   resetHistory();
@@ -751,7 +752,7 @@ function renderOutputBlob() {
 $('btnCopy').addEventListener('click', async () => {
   if (!state.img) return;
   if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
-    alert('Copying images is not supported in this browser.');
+    alert(t('copyUnsupported'));
     return;
   }
   try {
@@ -762,10 +763,10 @@ $('btnCopy').addEventListener('click', async () => {
     ]);
     const button = $('btnCopy');
     button.classList.add('copied');
-    $('copyStatus').textContent = 'Output image copied to clipboard.';
+    $('copyStatus').textContent = t('copySuccess');
     setTimeout(() => button.classList.remove('copied'), 1200);
   } catch (err) {
-    alert('Could not copy the image. Check clipboard permission and try again.');
+    alert(t('copyFailed'));
   }
 });
 
@@ -790,7 +791,7 @@ $('btnSave').addEventListener('click', async () => {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   } catch (err) {
-    alert('Could not save the image.');
+    alert(t('saveFailed'));
   }
 });
 

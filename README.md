@@ -18,6 +18,7 @@ nondestructive, all on-device. No uploads, no server, no accounts.
 - undo and redo controls cover edits to censor objects
 - opening a new image asks for confirmation when edit history would be lost
 - closing or reloading the tab warns when edit history would be lost
+- 32 hand-written, browser-selected language catalogs with per-message English fallback and RTL support
 - strength is **per object**: mosaic = square cell size from 1×1 to 64×64 pixels,
   blur = radius in pixels
 - pinch to zoom, two-finger / move-mode drag to pan
