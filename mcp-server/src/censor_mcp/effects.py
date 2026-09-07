@@ -13,14 +13,15 @@ import math
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
-# Decompression-bomb guard, sized from the container's 512 MiB limit: the
-# persistent rasters (decoded image, RGBA source, output copy) plus transient
-# region/crop/layer buffers stay under roughly 6 bytes per pixel even for a
-# full-image region. Pillow raises above this instead of just warning.
-Image.MAX_IMAGE_PIXELS = 20_000_000
+# Decompression-bomb guard, sized from the container's 512 MiB limit with
+# everything accounted: 4 persistent rasters (~192 MiB), a worst-case padded
+# chunk's source + grid + output (~67 MiB), two admitted raw+parsed input
+# bodies (~153 MiB), plus interpreter overhead. Pillow raises above this
+# instead of just warning.
+Image.MAX_IMAGE_PIXELS = 12_000_000
 
 MAX_DIMENSION = 8192
-MAX_PIXELS = 20_000_000
+MAX_PIXELS = 12_000_000
 MAX_BASE64_CHARS = 40_000_000  # ~30 MB of image data once decoded
 MAX_REGION_COORD = 100_000     # geometry beyond this is nonsense and only
                                # feeds Pillow's rasterizer pointless work
@@ -177,8 +178,10 @@ def _normalize_regions(img: Image.Image, regions: list[dict]) -> list[dict]:
         # Only reject regions with no visible coverage. Geometry itself is NOT
         # clipped here: clipping an ellipse's bounding box would reshape it and
         # leave requested pixels uncovered, so masks are drawn at full geometry
-        # and clipped by the image boundary instead.
-        if x + w < 1 or y + h < 1 or x > img.width - 1 or y > img.height - 1:
+        # and clipped by the image boundary instead. The intersection test uses
+        # the CONTINUOUS bounds so fractional slivers like {x:99.5, w:0.5} on a
+        # 100px image are correctly seen as visible.
+        if x + w <= 0 or y + h <= 0 or x >= img.width or y >= img.height:
             raise CensorError(f"region {i}: lies outside the {img.width}x{img.height} image")
         shape = r.get("shape", "rect")
         if shape not in ("rect", "ellipse"):

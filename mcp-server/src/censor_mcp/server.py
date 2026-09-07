@@ -199,47 +199,53 @@ _pool = ThreadPoolExecutor(max_workers=int(os.environ.get("CENSOR_WORKERS", "1")
 
 # Bound retained work: without this, uploads (each up to ~45 MB of base64)
 # pile into the executor's unbounded queue and can exceed the container's
-# memory limit before any rate limit trips. The semaphore is acquired in the
-# TOOL (before submission, so queued requests are bounded too) and released
-# inside the worker's own finally (so a cancelled coroutine cannot free the
-# slot while work continues).
+# memory limit before any rate limit trips. Ownership rule: the tool acquires
+# before submission (so waiting calls are bounded too), and exactly ONE party
+# releases — the Future's done callback if the worker actually started, the
+# tool otherwise. Cancellation of the awaiting coroutine never frees a slot
+# while work is still running.
 _admission = threading.BoundedSemaphore(int(os.environ.get("CENSOR_MAX_INFLIGHT", "2")))
 
 
 def _process(image_b64: str | None, image_url: str | None, regions: list[dict],
              output_format: str) -> tuple[str, str, int, int]:
-    # Release happens INSIDE the worker: if the awaiting coroutine is
-    # cancelled, the slot stays held until the work actually finishes instead
-    # of being freed early by the coroutine's finally. (Acquire is in the
-    # tool, before submission, so the queue of waiting calls is bounded.)
-    # Errors are returned, not raised, so the tool can tell "worker ran and
-    # released" apart from "submission failed" without double-releasing.
+    # Errors are returned, not raised, so the tool can hand them to the caller
+    # without conflating them with submission failures.
     try:
-        try:
-            img, src_fmt = decode_image(image_b64=image_b64, image_url=image_url)
-            width, height = img.size
-            result = censor(img, regions)
-            fmt = output_format.upper()
-            if fmt == "ORIGINAL":
-                fmt = "JPEG" if src_fmt == "JPEG" else "PNG"
-            if fmt not in ("PNG", "JPEG"):
-                raise CensorError("output_format must be 'png', 'jpeg', or 'original'")
-            return (encode_image(result, fmt), fmt, width, height)
-        except CensorError as e:
-            return e
-    finally:
-        _admission.release()
+        img, src_fmt = decode_image(image_b64=image_b64, image_url=image_url)
+        width, height = img.size
+        result = censor(img, regions)
+        fmt = output_format.upper()
+        if fmt == "ORIGINAL":
+            fmt = "JPEG" if src_fmt == "JPEG" else "PNG"
+        if fmt not in ("PNG", "JPEG"):
+            raise CensorError("output_format must be 'png', 'jpeg', or 'original'")
+        return (encode_image(result, fmt), fmt, width, height)
+    except CensorError as e:
+        return e
 
 
 def _info(image_b64: str | None, image_url: str | None) -> dict:
     try:
-        try:
-            img, fmt = decode_image(image_b64=image_b64, image_url=image_url)
-            return {"width": img.width, "height": img.height, "format": fmt}
-        except CensorError as e:
-            return e
-    finally:
-        _admission.release()
+        img, fmt = decode_image(image_b64=image_b64, image_url=image_url)
+        return {"width": img.width, "height": img.height, "format": fmt}
+    except CensorError as e:
+        return e
+
+
+def _submit(fn, *args):
+    """Submit worker fn with single-owner admission release.
+
+    The caller must already hold _admission. If the executor accepts the job,
+    the concurrent Future's done callback releases when the work truly
+    finishes — even if the awaiting coroutine is cancelled meanwhile (the
+    concurrent future keeps running and its callback still fires). If
+    submission itself fails, the job never runs and the caller releases via
+    its not-submitted path instead.
+    """
+    cf_future = _pool.submit(fn, *args)
+    cf_future.add_done_callback(lambda f: _admission.release())
+    return asyncio.wrap_future(cf_future)
 
 
 _REGION_SCHEMA = {
@@ -325,21 +331,14 @@ async def censor_image(
 
     if not _admission.acquire(blocking=False):
         raise ValueError("server is busy processing other images; try again in a few seconds")
-    loop = asyncio.get_running_loop()
+    submitted = False
     try:
-        outcome = await loop.run_in_executor(
-            _pool, _process, image_b64, image_url, regions, output_format
-        )
-    except BaseException:
-        # Submission itself failed or the await was cancelled before the
-        # worker started: its finally never runs, so release here. If the
-        # worker already started, its finally releases too and BoundedSemaphore
-        # raises ValueError on the over-release; swallow that exact race.
-        try:
+        future = _submit(_process, image_b64, image_url, regions, output_format)
+        submitted = True  # the done callback now owns the release
+        outcome = await future
+    finally:
+        if not submitted:
             _admission.release()
-        except ValueError:
-            pass
-        raise
     if isinstance(outcome, CensorError):
         raise ValueError(str(outcome)) from None
     b64, fmt, width, height = outcome
@@ -370,15 +369,14 @@ async def get_image_info(
     """
     if not _admission.acquire(blocking=False):
         raise ValueError("server is busy processing other images; try again in a few seconds")
-    loop = asyncio.get_running_loop()
+    submitted = False
     try:
-        outcome = await loop.run_in_executor(_pool, _info, image_b64, image_url)
-    except BaseException:
-        try:
+        future = _submit(_info, image_b64, image_url)
+        submitted = True  # the done callback now owns the release
+        outcome = await future
+    finally:
+        if not submitted:
             _admission.release()
-        except ValueError:
-            pass
-        raise
     if isinstance(outcome, CensorError):
         raise ValueError(str(outcome)) from None
     return outcome
