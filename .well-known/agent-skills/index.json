@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agentskills.io/schema/agent-skills-index-0.2.0.json",
+  "skills": [
+    {
+      "name": "censor-image",
+      "type": "skill",
+      "description": "Censor regions of an image with mosaic or Gaussian blur via the censor MCP server. Images are processed in memory and never stored.",
+      "url": "https://censor.lost.plus/skills/censor-image/SKILL.md",
+      "sha256": "4aa7cccac5ba41bb65b6a4b016cd39cb266116af1f7617d677aeea14fcd78905"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+services:
+  censor-mcp:
+    build: .
+    container_name: censor-mcp
+    user: "1000:1000"
+    mem_limit: 512m
+    memswap_limit: 512m
+    oom_score_adj: 500
+    restart: unless-stopped
+    read_only: true            # privacy: the app never touches disk anyway
+    tmpfs:
+      - /tmp:size=64m
+    ports:
+      - "127.0.0.1:8610:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      ALLOWED_ORIGINS: https://*.lost.plus
+      RATE_LIMIT_PER_MINUTE: "30"
+      RATE_LIMIT_PER_HOUR: "240"
+      CENSOR_WORKERS: "2"
