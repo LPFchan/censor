@@ -46,8 +46,13 @@ h1 { font-size: 28px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 6px;
 #landing p { color: var(--dim); margin: 0 0 22px; }
 #landing .tiny { font-size: 12.5px; margin-top: 18px; }
 
+.landing-actions {
+  display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+  width: min(260px, 100%); margin: 0 auto;
+}
+
 .open-btn {
-  display: inline-block;
+  display: block;
   background: var(--accent); color: #fff;
   font-weight: 600; font-size: 17px;
   padding: 14px 28px; border-radius: 999px;
@@ -55,6 +60,17 @@ h1 { font-size: 28px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 6px;
 }
 .open-btn:active { transform: scale(.97); }
 .open-btn input { display: none; }
+
+.clipboard-btn {
+  color: var(--text); background: var(--panel2);
+  border: 1px solid #3b3b44; border-radius: 999px;
+  padding: 11px 24px; font-weight: 600;
+}
+.clipboard-btn:active { transform: scale(.97); background: #303037; }
+#landing .load-status {
+  min-height: 1.45em; margin: 10px 0 0;
+  color: var(--dim); font-size: 12.5px;
+}
 
 /* ---------- editor ---------- */
 

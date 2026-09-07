@@ -20,10 +20,14 @@
     <img class="mark" src="icons/icon.svg" alt="" aria-hidden="true">
     <h1>censor</h1>
     <p>blur &amp; pixelate parts of a photo.<br>everything stays on your device.</p>
-    <label class="open-btn">
-      open an image
-      <input type="file" id="file" accept="image/*">
-    </label>
+    <div class="landing-actions">
+      <label class="open-btn">
+        open an image
+        <input type="file" id="file" accept="image/*">
+      </label>
+      <button id="clipboardOpen" class="clipboard-btn" type="button">load from clipboard</button>
+    </div>
+    <p id="loadStatus" class="load-status" role="status" aria-live="polite"></p>
     <p class="tiny">draw boxes or scribble freely · adjust strength per object · drag to reposition</p>
   </div>
 </section>

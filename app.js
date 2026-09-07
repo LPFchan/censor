@@ -30,11 +30,13 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 
 /* ---------- image loading ---------- */
 
-$('file').addEventListener('change', async (e) => {
-  const file = e.target.files && e.target.files[0];
-  if (!file) return;
+function setLoadStatus(message) {
+  $('loadStatus').textContent = message;
+}
+
+async function loadImage(source) {
   try {
-    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const bmp = await createImageBitmap(source, { imageOrientation: 'from-image' });
     let w = bmp.width, h = bmp.height;
     const k = Math.min(1, MAX_TEX / Math.max(w, h));
     w = Math.round(w * k); h = Math.round(h * k);
@@ -47,10 +49,51 @@ $('file').addEventListener('change', async (e) => {
     fitView();
     resetHistory();
     requestRender();
+    setLoadStatus('');
+    return true;
   } catch (err) {
-    alert('Could not open that image.');
+    setLoadStatus('Could not open that image.');
+    return false;
   }
+}
+
+$('file').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (file) await loadImage(file);
   e.target.value = '';
+});
+
+window.addEventListener('paste', async (e) => {
+  if (document.body.classList.contains('editing')) return;
+  const image = [...(e.clipboardData?.items || [])]
+    .find(item => item.type.startsWith('image/'))
+    ?.getAsFile();
+  if (!image) {
+    setLoadStatus('The clipboard does not contain an image.');
+    return;
+  }
+  e.preventDefault();
+  await loadImage(image);
+});
+
+$('clipboardOpen').addEventListener('click', async () => {
+  if (!navigator.clipboard?.read) {
+    setLoadStatus('Clipboard access is unavailable here. Try Cmd/Ctrl+V.');
+    return;
+  }
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const type = item.types.find(candidate => candidate.startsWith('image/'));
+      if (type) {
+        await loadImage(await item.getType(type));
+        return;
+      }
+    }
+    setLoadStatus('The clipboard does not contain an image.');
+  } catch (err) {
+    setLoadStatus('Clipboard access was blocked. Try Cmd/Ctrl+V.');
+  }
 });
 
 function fitView() {
