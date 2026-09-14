@@ -14,7 +14,7 @@ nondestructive, all on-device. No uploads, no server, no accounts.
   reposition, resize boxes from their corner handles, adjust its effect
   (mosaic / blur) and strength, or delete it
 - creating a box or freehand censor returns to move mode automatically
-- keyboard shortcuts: M = box, V = move, B = brush, [ / ] = effect strength
+- keyboard shortcuts: M = box, V = move, B = brush, [ / ] = effect strength, Cmd/Ctrl+C then Cmd/Ctrl+V to copy and paste the selected object, Alt-drag to duplicate an object
 - undo and redo controls cover edits to censor objects
 - opening a new image asks for confirmation when edit history would be lost
 - closing or reloading the tab warns when edit history would be lost

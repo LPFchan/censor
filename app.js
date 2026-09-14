@@ -454,6 +454,19 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
 
+  // Alt-drag: duplicate the touched object and drag the copy, in any tool.
+  if (e.altKey) {
+    const hit = hitObject(ip);
+    if (hit) {
+      const clone = cloneObject(hit);
+      state.objects.push(clone);
+      selectObject(clone.id);
+      gesture = { type: 'drag', id: clone.id, last: ip };
+      requestRender();
+      return;
+    }
+  }
+
   if (state.tool === 'move' || state.space) {
     const hit = state.tool === 'move' && !state.space ? hitObject(ip) : null;
     if (hit) {
@@ -671,6 +684,32 @@ function moveObject(obj, dx, dy) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
+// Deep-copy an object with a fresh id (used by Alt-drag and Cmd/Ctrl+V).
+function cloneObject(obj) {
+  return {
+    ...obj,
+    id: uid(),
+    rect: obj.rect ? { ...obj.rect } : undefined,
+    points: obj.points ? obj.points.map(p => ({ x: p.x, y: p.y })) : undefined,
+  };
+}
+
+// In-app object clipboard (separate from the OS clipboard used by btnCopy).
+let objClipboard = null;
+
+function copySelectedObject() {
+  const obj = state.objects.find(o => o.id === state.selected);
+  if (obj) objClipboard = cloneObject(obj);
+}
+
+function pasteObject() {
+  if (!objClipboard) return;
+  const clone = cloneObject(objClipboard);
+  state.objects.push(clone);
+  selectObject(clone.id);
+  commitHistory();
+}
+
 /* ---------- toolbar & selection ---------- */
 
 function setTool(tool) {
@@ -871,6 +910,16 @@ window.addEventListener('keydown', (e) => {
   }
   if (mod && e.key.toLowerCase() === 'y') {
     restoreHistory(historyIndex + 1);
+    e.preventDefault();
+    return;
+  }
+  if (mod && e.key.toLowerCase() === 'c') {
+    copySelectedObject();
+    e.preventDefault();
+    return;
+  }
+  if (mod && e.key.toLowerCase() === 'v') {
+    pasteObject();
     e.preventDefault();
     return;
   }
