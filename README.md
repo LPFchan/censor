@@ -59,3 +59,7 @@ proxies to this server on `127.0.0.1:8600`. Censor intentionally remains
 anonymous; the gateway strips shared cookies and machine credentials before
 forwarding. Bump `CACHE` in `sw.js` when shipping changes so installed copies
 pick up the update.
+
+The icon lab's `/save-icons` and `/save-zip` helpers are disabled by default.
+For a direct local development session only, set `CENSOR_ENABLE_LOCAL_WRITES=1`;
+never set it on the gateway-backed production service.
