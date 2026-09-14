@@ -169,10 +169,12 @@ class _AdmissionMiddleware:
     each admitted request can hold a bounded body (see below), and the
     container must keep total memory under 512 MiB including image rasters.
 
-    The raw Content-Length is also capped far below the proxy's generous
-    45 MB: a legitimate call is one image (~40 MB of base64) plus small
-    JSON. Byte size alone does not bound JSON expansion — millions of tiny
-    region objects fit within 25 MB but materialize as hundreds of MiB of
+    The body is capped regardless of HTTP framing: a legitimate call is one
+    image (~40 MB of base64) plus small JSON. Content-Length is used as an
+    early rejection hint when present, but chunked and HTTP/2 bodies are
+    counted while they are read. Byte size alone does not bound JSON
+    expansion — millions of tiny region objects fit within 25 MB but
+    materialize as hundreds of MiB of
     Python dicts — so the buffered body gets ONE structural scan: strip the
     single largest string literal (the image payload, legitimately huge) and
     reject if the remaining JSON exceeds a small cap. Bytes are discarded
@@ -224,11 +226,12 @@ class _AdmissionMiddleware:
         if scope["type"] != "http" or scope.get("path", "") in self.exempt_paths:
             await self.app(scope, receive, send)
             return
+        length_header = dict(scope.get("headers", [])).get(b"content-length")
         try:
-            length = int(dict(scope.get("headers", [])).get(b"content-length", b"0"))
+            declared_length = int(length_header) if length_header is not None else None
         except ValueError:
-            length = 0
-        if length > MAX_MCP_BODY:
+            declared_length = -1
+        if declared_length is not None and (declared_length < 0 or declared_length > MAX_MCP_BODY):
             body = b'{"error":"request too large"}'
             await send({
                 "type": "http.response.start",
@@ -250,27 +253,19 @@ class _AdmissionMiddleware:
         # try/finally, so cancellation or an exception during buffering,
         # screening, or the downstream app can never strand the permit.
         try:
-            if length > 0:
-                # Buffer and structurally screen the body BEFORE the app
-                # parses it. Any failure to read the declared length rejects.
-                chunks = []
-                remaining = length
-                while remaining > 0:
-                    message = await receive()
-                    if message["type"] == "http.disconnect":
-                        return
-                    chunk = message.get("body", b"")
-                    chunks.append(chunk)
-                    remaining -= len(chunk)
-                    if not message.get("more_body", False):
-                        break
-                raw = b"".join(chunks)
-                structural = self._strip_largest_string(raw)
-                oversized = remaining > 0 or len(structural) > MAX_JSON_NON_IMAGE
-                del structural
-                if oversized:
-                    del raw
-                    body = b'{"error":"request rejected: too much non-image JSON"}'
+            # Buffer and structurally screen every body before the app parses
+            # it, including HTTP/1.1 chunked and HTTP/2 bodies without a
+            # Content-Length header.
+            chunks = []
+            received = 0
+            while True:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    return
+                chunk = message.get("body", b"")
+                received += len(chunk)
+                if received > MAX_MCP_BODY:
+                    body = b'{"error":"request too large"}'
                     await send({
                         "type": "http.response.start",
                         "status": 413,
@@ -278,19 +273,37 @@ class _AdmissionMiddleware:
                     })
                     await send({"type": "http.response.body", "body": body})
                     return
-                orig_receive = receive
-                delivered = False
+                chunks.append(chunk)
+                if not message.get("more_body", False):
+                    break
+            raw = b"".join(chunks)
+            structural = self._strip_largest_string(raw)
+            malformed_length = declared_length is not None and received != declared_length
+            oversized = len(structural) > MAX_JSON_NON_IMAGE
+            del structural
+            if malformed_length or oversized:
+                del raw
+                body = b'{"error":"request rejected: invalid length or too much non-image JSON"}'
+                await send({
+                    "type": "http.response.start",
+                    "status": 413,
+                    "headers": [(b"content-type", b"application/json")],
+                })
+                await send({"type": "http.response.body", "body": body})
+                return
+            orig_receive = receive
+            delivered = False
 
-                async def replay():
-                    nonlocal delivered
-                    if not delivered:
-                        delivered = True
-                        return {"type": "http.request", "body": raw, "more_body": False}
-                    # Delegate subsequent reads (e.g. disconnect monitoring)
-                    # to the ORIGINAL receive, captured before reassignment.
-                    return await orig_receive()
+            async def replay():
+                nonlocal delivered
+                if not delivered:
+                    delivered = True
+                    return {"type": "http.request", "body": raw, "more_body": False}
+                # Delegate subsequent reads (e.g. disconnect monitoring)
+                # to the ORIGINAL receive, captured before reassignment.
+                return await orig_receive()
 
-                receive = replay
+            receive = replay
             await self.app(scope, receive, send)
         finally:
             self.semaphore.release()
