@@ -1,4 +1,4 @@
-import http.server, functools, json, base64, pathlib, urllib.request, urllib.error, time
+import http.server, functools, json, base64, os, pathlib, urllib.request, urllib.error, time
 
 def _connection_tokens(headers):
     # Connection may appear several times; .get() would see only one field.
@@ -15,6 +15,7 @@ HOP_BY_HOP = {'host', 'content-length', 'connection', 'transfer-encoding',
 
 ICONS = pathlib.Path(__file__).parent / 'icons'
 ALLOWED = {'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'}
+ENABLE_LOCAL_WRITES = os.environ.get('CENSOR_ENABLE_LOCAL_WRITES') == '1'
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -26,7 +27,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path.startswith('/mcp'):
             return self._proxy()
-        # icon-lab save endpoints: only from tailnet/loopback
+        # Icon-lab writes are a local development tool. Production leaves the
+        # opt-in unset because a reverse proxy also connects from loopback.
+        if not ENABLE_LOCAL_WRITES:
+            self.send_error(404); return
         ip = self.client_address[0]
         if not (ip.startswith('100.') or ip in ('127.0.0.1', '::1')):
             self.send_error(403); return
