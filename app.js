@@ -442,6 +442,14 @@ function eventPos(e) {
   return { x: e.clientX - r.left, y: e.clientY - r.top };
 }
 
+function newDragGesture(id, originId, ip) {
+  return {
+    type: 'drag', id, originId,
+    anchor: { x: ip.x, y: ip.y },
+    applied: { x: 0, y: 0 },
+  };
+}
+
 // Some browsers drop modifier state on pointermove events, so track the
 // Alt/Shift keys from keydown too and OR the two sources together.
 const heldKeys = { alt: false, shift: false };
@@ -490,7 +498,7 @@ canvas.addEventListener('pointerdown', (e) => {
       const clone = cloneObject(hit);
       state.objects.push(clone);
       selectObject(clone.id);
-      gesture = { type: 'drag', id: clone.id, originId: hit.id, last: ip, axis: null };
+      gesture = newDragGesture(clone.id, hit.id, ip);
       requestRender();
       return;
     }
@@ -500,7 +508,7 @@ canvas.addEventListener('pointerdown', (e) => {
     const hit = state.tool === 'move' && !state.space ? hitObject(ip) : null;
     if (hit) {
       selectObject(hit.id);
-      gesture = { type: 'drag', id: hit.id, last: ip };
+      gesture = newDragGesture(hit.id, null, ip);
     } else {
       if (state.tool === 'move') selectObject(null);
       gesture = { type: 'pan', last: p };
@@ -553,18 +561,20 @@ canvas.addEventListener('pointermove', (e) => {
     case 'drag': {
       const obj = state.objects.find(o => o.id === gesture.id);
       if (!obj) break;
-      let dx = ip.x - gesture.last.x;
-      let dy = ip.y - gesture.last.y;
-      // Shift snaps to one axis; the first significant move picks the axis.
-      if (shiftHeld(e)) {
-        if (gesture.axis === null && Math.abs(dx - dy) > 2) {
-          gesture.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
-        }
-        if (gesture.axis === 'x') dy = 0;
-        else if (gesture.axis === 'y') dx = 0;
-      }
-      moveObject(obj, dx, dy);
-      gesture.last = ip;
+      // The anchor is fixed at pointer-down and never moves, so the object's
+      // position is always a pure offset from where the drag started, no
+      // matter when Shift is pressed. While Shift is held, that offset is
+      // reduced to its stronger component: the object rides the horizontal
+      // or vertical line through its start position. Pressing Shift mid-drag
+      // snaps the object onto that line relative to the original position,
+      // not relative to wherever it happened to be at that moment.
+      const off = { x: ip.x - gesture.anchor.x, y: ip.y - gesture.anchor.y };
+      const total = !shiftHeld(e) ? off
+        : Math.abs(off.x) >= Math.abs(off.y)
+          ? { x: off.x, y: 0 }
+          : { x: 0, y: off.y };
+      moveObject(obj, total.x - gesture.applied.x, total.y - gesture.applied.y);
+      gesture.applied = total;
       requestRender();
       break;
     }
