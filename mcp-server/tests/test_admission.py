@@ -1,5 +1,6 @@
 import asyncio
 
+import censor_mcp.server as server
 from censor_mcp.server import MAX_JSON_NON_IMAGE, _AdmissionMiddleware
 
 
@@ -69,3 +70,49 @@ def test_declared_length_must_match_received_body():
 
     assert status == 413
     assert downstream_bodies == []
+
+
+def test_stalled_body_times_out_and_releases_admission_permit(monkeypatch):
+    monkeypatch.setattr(server, "MCP_BODY_READ_TIMEOUT", 0.01)
+    responses: list[dict] = []
+    downstream_calls = 0
+
+    async def downstream(scope, receive, send):
+        nonlocal downstream_calls
+        downstream_calls += 1
+        await receive()
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    first_message = True
+
+    async def stalled_receive():
+        nonlocal first_message
+        if first_message:
+            first_message = False
+            return {"type": "http.request", "body": b"{", "more_body": True}
+        await asyncio.Event().wait()
+
+    async def send(message):
+        responses.append(message)
+
+    scope = {"type": "http", "method": "POST", "path": "/mcp", "headers": []}
+    middleware = _AdmissionMiddleware(downstream, 1)
+    asyncio.run(middleware(scope, stalled_receive, send))
+
+    assert next(message["status"] for message in responses if message["type"] == "http.response.start") == 408
+    assert downstream_calls == 0
+
+    # The timeout path must release the only permit for the next request.
+    body = b'{"jsonrpc":"2.0"}'
+    next_responses: list[dict] = []
+
+    async def normal_receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def next_send(message):
+        next_responses.append(message)
+
+    asyncio.run(middleware(scope, normal_receive, next_send))
+    assert next(message["status"] for message in next_responses if message["type"] == "http.response.start") == 204
+    assert downstream_calls == 1

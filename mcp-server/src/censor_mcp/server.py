@@ -258,24 +258,35 @@ class _AdmissionMiddleware:
             # Content-Length header.
             chunks = []
             received = 0
-            while True:
-                message = await receive()
-                if message["type"] == "http.disconnect":
-                    return
-                chunk = message.get("body", b"")
-                received += len(chunk)
-                if received > MAX_MCP_BODY:
-                    body = b'{"error":"request too large"}'
-                    await send({
-                        "type": "http.response.start",
-                        "status": 413,
-                        "headers": [(b"content-type", b"application/json")],
-                    })
-                    await send({"type": "http.response.body", "body": body})
-                    return
-                chunks.append(chunk)
-                if not message.get("more_body", False):
-                    break
+            try:
+                async with asyncio.timeout(MCP_BODY_READ_TIMEOUT):
+                    while True:
+                        message = await receive()
+                        if message["type"] == "http.disconnect":
+                            return
+                        chunk = message.get("body", b"")
+                        received += len(chunk)
+                        if received > MAX_MCP_BODY:
+                            body = b'{"error":"request too large"}'
+                            await send({
+                                "type": "http.response.start",
+                                "status": 413,
+                                "headers": [(b"content-type", b"application/json")],
+                            })
+                            await send({"type": "http.response.body", "body": body})
+                            return
+                        chunks.append(chunk)
+                        if not message.get("more_body", False):
+                            break
+            except TimeoutError:
+                body = b'{"error":"request body timed out"}'
+                await send({
+                    "type": "http.response.start",
+                    "status": 408,
+                    "headers": [(b"content-type", b"application/json")],
+                })
+                await send({"type": "http.response.body", "body": body})
+                return
             raw = b"".join(chunks)
             structural = self._strip_largest_string(raw)
             malformed_length = declared_length is not None and received != declared_length
@@ -324,6 +335,10 @@ _admission = threading.BoundedSemaphore(int(os.environ.get("CENSOR_MAX_INFLIGHT"
 # One image is ~40 MB of base64; anything past it in a single JSON-RPC body
 # is regions-shaped attack surface, not a legitimate request.
 MAX_MCP_BODY = int(os.environ.get("CENSOR_MAX_BODY", "41_000_000"))
+
+# Absolute wall-clock limit for receiving the complete body. Anonymous slow
+# uploads must not hold every admission permit indefinitely.
+MCP_BODY_READ_TIMEOUT = float(os.environ.get("CENSOR_BODY_READ_TIMEOUT", "30"))
 
 # Cap on JSON bytes EXCLUDING the single largest string literal (the image
 # payload). A legitimate call needs one envelope, one params object, and at
