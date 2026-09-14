@@ -442,6 +442,20 @@ function eventPos(e) {
   return { x: e.clientX - r.left, y: e.clientY - r.top };
 }
 
+// Some browsers drop modifier state on pointermove events, so track the
+// Alt/Shift keys from keydown too and OR the two sources together.
+const heldKeys = { alt: false, shift: false };
+const altHeld = (e) => e.altKey || heldKeys.alt;
+const shiftHeld = (e) => e.shiftKey || heldKeys.shift;
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Alt' || e.key === 'Meta' || e.key === 'Control') heldKeys.alt = true;
+  if (e.key === 'Shift') heldKeys.shift = true;
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Alt' || e.key === 'Meta' || e.key === 'Control') heldKeys.alt = false;
+  if (e.key === 'Shift') heldKeys.shift = false;
+});
+
 canvas.addEventListener('pointerdown', (e) => {
   if (!state.img) return;
   canvas.setPointerCapture(e.pointerId);
@@ -470,13 +484,13 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 
   // Alt-drag: duplicate the touched object and drag the copy, in any tool.
-  if (e.altKey) {
+  if (altHeld(e)) {
     const hit = hitObject(ip);
     if (hit) {
       const clone = cloneObject(hit);
       state.objects.push(clone);
       selectObject(clone.id);
-      gesture = { type: 'drag', id: clone.id, originId: hit.id, last: ip };
+      gesture = { type: 'drag', id: clone.id, originId: hit.id, last: ip, axis: null };
       requestRender();
       return;
     }
@@ -541,9 +555,13 @@ canvas.addEventListener('pointermove', (e) => {
       if (!obj) break;
       let dx = ip.x - gesture.last.x;
       let dy = ip.y - gesture.last.y;
-      // Shift snaps to one axis; whichever direction moved further wins.
-      if (e.shiftKey) {
-        if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0;
+      // Shift snaps to one axis; the first significant move picks the axis.
+      if (shiftHeld(e)) {
+        if (gesture.axis === null && Math.abs(dx - dy) > 2) {
+          gesture.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+        }
+        if (gesture.axis === 'x') dy = 0;
+        else if (gesture.axis === 'y') dx = 0;
       }
       moveObject(obj, dx, dy);
       gesture.last = ip;
@@ -598,6 +616,7 @@ function endPointer(e) {
     commitHistory();
   }
   gesture = null;
+  requestRender(); // clears the alt-drag source outline after release
 }
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
