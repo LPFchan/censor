@@ -350,6 +350,21 @@ function render() {
   for (const obj of state.objects) drawEffect(ctx, obj);
   const sel = state.objects.find(o => o.id === state.selected);
   if (sel) drawSelection(ctx, sel);
+  // During Alt-drag the source keeps a dashed outline beside the clone's.
+  if (gesture && gesture.originId && gesture.originId !== state.selected) {
+    const src = state.objects.find(o => o.id === gesture.originId);
+    if (src) drawOutlineOnly(ctx, src);
+  }
+}
+
+function drawOutlineOnly(c, obj) {
+  c.save();
+  c.strokeStyle = '#0a84ff';
+  c.lineWidth = 1.5 / state.view.scale;
+  c.setLineDash([6 / state.view.scale, 4 / state.view.scale]);
+  const b = obj.kind === 'rect' ? obj.rect : strokeBounds(obj);
+  c.strokeRect(b.x, b.y, b.w, b.h);
+  c.restore();
 }
 
 function drawSelection(c, obj) {
@@ -461,7 +476,7 @@ canvas.addEventListener('pointerdown', (e) => {
       const clone = cloneObject(hit);
       state.objects.push(clone);
       selectObject(clone.id);
-      gesture = { type: 'drag', id: clone.id, last: ip };
+      gesture = { type: 'drag', id: clone.id, originId: hit.id, last: ip };
       requestRender();
       return;
     }
@@ -524,7 +539,13 @@ canvas.addEventListener('pointermove', (e) => {
     case 'drag': {
       const obj = state.objects.find(o => o.id === gesture.id);
       if (!obj) break;
-      moveObject(obj, ip.x - gesture.last.x, ip.y - gesture.last.y);
+      let dx = ip.x - gesture.last.x;
+      let dy = ip.y - gesture.last.y;
+      // Shift snaps to one axis; whichever direction moved further wins.
+      if (e.shiftKey) {
+        if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0;
+      }
+      moveObject(obj, dx, dy);
       gesture.last = ip;
       requestRender();
       break;
