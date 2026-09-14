@@ -3,7 +3,8 @@
 MCP server that applies [censor](https://censor.lost.plus)'s blur and mosaic
 effects to images supplied by an agent.
 
-**endpoint: `https://censor.lost.plus/mcp`** (streamable HTTP, no auth)
+**endpoint: `https://censor.lost.plus/mcp`** (streamable HTTP, intentionally
+anonymous through the Common Auth gateway's `public` policy)
 
 ## privacy
 
