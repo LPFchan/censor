@@ -53,13 +53,12 @@ python3 -m http.server 8600
 
 ## deploy
 
-Hosted through the OCI Common Auth gateway as an explicit `public` service:
-Cloudflare Tunnel sends `censor.lost.plus` to `127.0.0.1:8740`, and the gateway
-proxies to this server on `127.0.0.1:8600`. Censor intentionally remains
-anonymous; the gateway strips shared cookies and machine credentials before
-forwarding. Bump `CACHE` in `sw.js` when shipping changes so installed copies
+Hosted directly behind the OCI Cloudflare Tunnel, outside Common Auth. The
+tunnel sends `/mcp` and the MCP server card to `127.0.0.1:8610`, and sends the
+remaining static app paths to `127.0.0.1:8600`. Censor intentionally remains
+anonymous. Bump `CACHE` in `sw.js` when shipping changes so installed copies
 pick up the update.
 
 The icon lab's `/save-icons` and `/save-zip` helpers are disabled by default.
 For a direct local development session only, set `CENSOR_ENABLE_LOCAL_WRITES=1`;
-never set it on the gateway-backed production service.
+never set it on the production service.
