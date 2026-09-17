@@ -1,0 +1,11 @@
+{
+  "name": "censor",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "pako": "^2.1.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

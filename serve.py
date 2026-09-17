@@ -1,6 +1,6 @@
 import http.server, functools, json, base64, os, pathlib
 
-ICONS = pathlib.Path(__file__).parent / 'icons'
+ICONS = pathlib.Path(__file__).parent / 'public' / 'icons'
 ALLOWED = {'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'}
 ENABLE_LOCAL_WRITES = os.environ.get('CENSOR_ENABLE_LOCAL_WRITES') == '1'
 
@@ -57,4 +57,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+# Static root moved to public/ when the app went to a Cloudflare Worker; the
+# icon-lab POST handlers above are unaffected (they target public/icons/).
+Handler = functools.partial(Handler, directory=str(pathlib.Path(__file__).parent / 'public'))
 http.server.ThreadingHTTPServer(('127.0.0.1', 8600), Handler).serve_forever()

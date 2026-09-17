@@ -1,0 +1,15 @@
+name = "censor"
+main = "worker/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = false
+
+# Static PWA served from the asset store. The worker script handles /mcp,
+# /healthz and the MCP server card, and rewrites cache headers on the app
+# files; everything else is served from public/ untouched.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
+
+# Production routes are applied through the Cloudflare API at deploy time
+# (censor.lost.plus/*), matching the existing zone's API-driven setup.
