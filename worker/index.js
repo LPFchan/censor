@@ -1,6 +1,6 @@
 // censor on Cloudflare Workers: static PWA from the asset store, plus the
 // /mcp JSON-RPC endpoint implemented directly in the worker (a stateless
-// port of mcp-server/, which was itself a Pillow port of app.js).
+// port of the original Pillow server, itself a port of app.js).
 //
 // Privacy invariant is unchanged: image bytes live only in this request's
 // isolate memory and are dropped when the response is returned. No KV, no
@@ -297,7 +297,7 @@ export default {
       });
     }
 
-    // Static app: serve from the asset store, preserving serve.py's caching
+    // Static app: serve from the asset store, preserving the caching
     // contract (code is no-cache while the app is actively developed) and
     // the agent-discovery Link header on the index page.
     const asset = await env.ASSETS.fetch(request);

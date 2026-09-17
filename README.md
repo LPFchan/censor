@@ -41,17 +41,17 @@ nothing is stored. Rate limits are lax (default 30/min per IP).
 - server card: `/.well-known/mcp/server-card.json`
 - agent skill: `/skills/censor-image/SKILL.md` (index at `/.well-known/agent-skills/index.json`)
 - capability manifest: `/.well-known/ai-catalog.json`
-- server source: `mcp-server/` (Pillow port of the app's canvas effects)
+- server source: `worker/` (JavaScript port of the app's canvas effects)
 
 ## develop
 
-It's just static files — serve the directory over HTTP:
+Static-only work: serve `public/` over HTTP:
 
 ```sh
 python3 -m http.server 8600 -d public
 ```
 
-Worker work (needs node):
+Worker work (the full app, /mcp included; needs node):
 
 ```sh
 npm install
@@ -63,19 +63,15 @@ npx wrangler dev        # local workerd, serves the app and /mcp together
 Runs as a single Cloudflare Worker (`worker/`). The static PWA is served from
 the worker asset store (`public/`), and `/mcp` plus the MCP server card are
 implemented in the worker itself (`worker/index.js`) — a JavaScript port of
-the Pillow reference implementation in `mcp-server/`, which is kept as the
-canonical spec. Image decode/encode runs on bundled WASM codecs (UPNG.js for
-PNG, mozjpeg for JPEG); the effects are plain typed-array math, so images
+the original Pillow reference implementation (kept in git history). Image
+decode/encode runs on bundled WASM codecs (UPNG.js for PNG, mozjpeg for
+JPEG); the effects are plain typed-array math, so images
 still never leave memory and nothing is stored anywhere.
 
 The worker is intentionally anonymous, outside Common Auth, exactly like the
-tunnel setup before it. Bump `CACHE` in `sw.js` when shipping changes so
+tunnel setup before it. Bump `CACHE` in `public/sw.js` when shipping changes so
 installed copies pick up the update.
 
-`serve.py` is retained for the legacy OCI static host and for the icon-lab
-save helpers; it is no longer the production path. The OCI `mcp-server/`
-container remains the fallback backend until the worker has soaked.
-
-The icon lab's `/save-icons` and `/save-zip` helpers are disabled by default.
-For a direct local development session only, set `CENSOR_ENABLE_LOCAL_WRITES=1`;
-never set it on the production service.
+The icon lab is a static page under `public/icon-lab.html`; its `/save-icons`
+and `/save-zip` helpers wrote through the old Python host and no longer have
+a backend. Download the icons from the lab and commit them by hand.

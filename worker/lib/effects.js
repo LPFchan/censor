@@ -1,4 +1,4 @@
-// Port of mcp-server/src/censor_mcp/effects.py to the Workers runtime.
+// Port of the original Pillow effects server to the Workers runtime.
 // Same memory philosophy: no disk, images exist only as rasters for the
 // duration of one call. The one deliberate simplification versus the
 // Pillow server: region processing is not chunked into 64-row bands,

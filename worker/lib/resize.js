@@ -1,4 +1,4 @@
-// Pixel-level primitives for the MCP worker port of mcp-server/effects.py.
+// Pixel-level primitives for the MCP worker port of the Pillow effects.
 // Everything operates on flat Uint8ClampedArray RGBA buffers so peak memory
 // is exactly the rasters we allocate — no canvas, no DOM, no implicit copies.
 
