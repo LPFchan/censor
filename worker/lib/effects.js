@@ -19,7 +19,8 @@ export const MAX_REGION_COORD = 100_000;
 export const BLUR_MIN = 2, BLUR_MAX = 80;
 export const MOSAIC_MIN = 1, MOSAIC_MAX = 64;
 
-export class CensorError extends Error {}
+import { CensorError } from './errors.js';
+export { CensorError };
 
 function parseDataUrl(data) {
   const comma = data.indexOf(',');
@@ -63,18 +64,61 @@ export async function decodeImage({ image_b64, image_url }) {
   }
   const bytes = b64ToBytes(payload);
   const format = sniffFormat(bytes);
+  // Reject oversized rasters from the header BEFORE paying for the decode,
+  // as the Pillow server did: a kilobyte of PNG can declare a raster that
+  // would exhaust the isolate's memory if decoded first and measured after.
+  checkDimensions(headerDimensions(bytes, format));
   let raster = format === 'JPEG' ? await decodeJpeg(bytes) : decodePng(bytes);
-  if (Math.max(raster.width, raster.height) > MAX_DIMENSION) {
-    throw new CensorError(`image dimensions exceed ${MAX_DIMENSION}px`);
-  }
-  if (raster.width * raster.height > MAX_PIXELS) {
-    throw new CensorError(`image exceeds ${MAX_PIXELS / 1_000_000} megapixels`);
-  }
+  checkDimensions(raster);
   // The mozjpeg WASM decoder ignores EXIF orientation; normalize exactly
   // like Pillow's exif_transpose so region coordinates address the pixels
   // the caller sees.
   raster = applyExifOrientation(raster, bytes);
   return { raster, format };
+}
+
+function checkDimensions({ width, height }) {
+  if (Math.max(width, height) > MAX_DIMENSION) {
+    throw new CensorError(`image dimensions exceed ${MAX_DIMENSION}px`);
+  }
+  if (width * height > MAX_PIXELS) {
+    throw new CensorError(`image exceeds ${MAX_PIXELS / 1_000_000} megapixels`);
+  }
+}
+
+/**
+ * Width and height read from the container header without decoding pixels.
+ * PNG: the IHDR chunk, always first. JPEG: the first SOFn marker. A file too
+ * broken to carry either is reported as undecodable here rather than handed
+ * to a codec.
+ */
+export function headerDimensions(bytes, format) {
+  const undecodable = () => new CensorError('could not decode image (supported: PNG, JPEG)');
+  const u16 = (p) => (bytes[p] << 8) | bytes[p + 1];
+  const u32 = (p) => ((bytes[p] << 24) | (bytes[p + 1] << 16) | (bytes[p + 2] << 8) | bytes[p + 3]) >>> 0;
+  if (format === 'PNG') {
+    // signature (8) + length (4) + 'IHDR' (4) + width (4) + height (4)
+    if (bytes.length < 24 || bytes[12] !== 0x49 || bytes[13] !== 0x48 || bytes[14] !== 0x44 || bytes[15] !== 0x52) {
+      throw undecodable();
+    }
+    return { width: u32(16), height: u32(20) };
+  }
+  let pos = 2;
+  while (pos + 4 <= bytes.length) {
+    if (bytes[pos] !== 0xff) throw undecodable();
+    const marker = bytes[pos + 1];
+    if (marker === 0xff) { pos++; continue; }            // fill byte
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { pos += 2; continue; }
+    if (marker === 0xd9 || marker === 0xda) break;        // EOI / SOS: no SOF seen
+    const len = u16(pos + 2);
+    const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isSof) {
+      if (pos + 9 > bytes.length) throw undecodable();
+      return { width: u16(pos + 7), height: u16(pos + 5) };
+    }
+    pos += 2 + len;
+  }
+  throw undecodable();
 }
 
 export async function encodeImage(raster, format) {

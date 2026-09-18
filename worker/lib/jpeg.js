@@ -9,6 +9,7 @@ import mozEncFactory from './mozjpeg_enc.js';
 import decWasm from './mozjpeg_dec.wasm';
 import encWasm from './mozjpeg_enc.wasm';
 import { Raster } from './resize.js';
+import { CensorError } from './errors.js';
 
 function wasmModule(binary) {
   return {
@@ -39,9 +40,9 @@ export async function decodeJpeg(bytes) {
     // effects.js, exactly like the Pillow server does with exif_transpose.
     result = mod.decode(bytes, false);
   } catch (e) {
-    throw new Error('could not decode image (supported: PNG, JPEG)');
+    throw new CensorError('could not decode image (supported: PNG, JPEG)');
   }
-  if (!result) throw new Error('could not decode image (supported: PNG, JPEG)');
+  if (!result) throw new CensorError('could not decode image (supported: PNG, JPEG)');
   return new Raster(result.width, result.height, new Uint8ClampedArray(result.data));
 }
 

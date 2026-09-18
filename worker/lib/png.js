@@ -11,13 +11,14 @@ import pako from 'pako';
 globalThis.__censorPako = pako;
 import UPNG from './png-upng.js';
 import { Raster } from './resize.js';
+import { CensorError } from './errors.js';
 
 export function decodePng(bytes) {
   let img;
   try {
     img = UPNG.decode(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   } catch (e) {
-    throw new Error('could not decode image (supported: PNG, JPEG)');
+    throw new CensorError('could not decode image (supported: PNG, JPEG)');
   }
   // UPNG.toRGBA8 returns one ArrayBuffer per frame; single-frame PNGs are
   // the only sane input for a censor tool.
