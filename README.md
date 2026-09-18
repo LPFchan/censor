@@ -33,45 +33,67 @@ entirely in canvas.
 ## for agents
 
 The same effects are available to agents as an MCP server at
-`https://censor.lost.plus/mcp` (streamable HTTP, no auth): send an image as
-base64 plus `{x, y, w, h}` pixel regions, get the censored image back. Images
-are processed in memory and discarded immediately after each response —
-nothing is stored. Rate limits are lax (default 30/min per IP).
+`https://censor.lost.plus/mcp` (streamable HTTP; protocol revisions
+2025-03-26, 2025-06-18 and 2026-07-28). Send an image as base64 plus
+`{x, y, w, h}` pixel regions, get the censored image back. Images are
+processed in memory and discarded immediately after each response; nothing
+is stored. Rate limits are lax (30/min and 240/hour per IP).
+
+Auth is optional. The endpoint sits behind the Common Auth gateway with
+anonymous access allowed: no credential is needed, and a Common Auth token
+(`Authorization: Bearer ...`) is accepted and attributed but unlocks nothing
+extra. A bad token is refused by the gateway (401), not silently downgraded.
 
 - server card: `/.well-known/mcp/server-card.json`
+- OAuth protected-resource metadata: `/.well-known/oauth-protected-resource/mcp` (answered by the gateway)
 - agent skill: `/skills/censor-image/SKILL.md` (index at `/.well-known/agent-skills/index.json`)
 - capability manifest: `/.well-known/ai-catalog.json`
-- server source: `worker/` (JavaScript port of the app's canvas effects)
+- server source: `worker/mcp.js` (tools and admission), `worker/lib/` (JavaScript port of the app's canvas effects)
 
 ## develop
-
-Static-only work: serve `public/` over HTTP:
-
-```sh
-python3 -m http.server 8600 -d public
-```
-
-Worker work (the full app, /mcp included; needs node):
 
 ```sh
 npm install
 npx wrangler dev        # local workerd, serves the app and /mcp together
+npm test                # vitest inside workerd (@cloudflare/vitest-pool-workers)
 ```
+
+Static-only work can also be served straight from `public/` with any file
+server; the app has no build step.
 
 ## deploy
 
-Runs as a single Cloudflare Worker (`worker/`). The static PWA is served from
-the worker asset store (`public/`), and `/mcp` plus the MCP server card are
-implemented in the worker itself (`worker/index.js`) — a JavaScript port of
-the original Pillow reference implementation (kept in git history). Image
-decode/encode runs on bundled WASM codecs (UPNG.js for PNG, mozjpeg for
-JPEG); the effects are plain typed-array math, so images
-still never leave memory and nothing is stored anywhere.
+One Cloudflare Worker, `censor` (`wrangler.toml`), deployed with
+`npm run deploy` (`wrangler deploy` with `CLOUDFLARE_API_TOKEN` in the
+environment). The static PWA is served from the Worker's asset store
+(`public/`); `/mcp`, `/healthz` and the MCP server card are handled by the
+script (`worker/`). Image decode/encode runs on bundled WASM codecs (UPNG.js
+for PNG, mozjpeg for JPEG); the effects are plain typed-array math. The
+Worker holds no state: no KV, D1, R2 or Cache API, and every image is gone
+when its response is returned.
 
-The worker is intentionally anonymous, outside Common Auth, exactly like the
-tunnel setup before it. Bump `CACHE` in `public/sw.js` when shipping changes so
-installed copies pick up the update.
+**Routing.** The Worker declares no route of its own and is off workers.dev.
+`censor.lost.plus/*` belongs to the `auth-gateway` Worker (repo `auth`,
+`gateway/config/cloudflare.gateway.json`), which reaches this Worker over its
+`CENSOR` service binding: `/mcp` under the `mcp` policy with
+`allow_anonymous: true` (token scope `censor`), and `/` under `public` for
+the app, the server card and `/healthz`. The gateway owns CORS and the
+OAuth metadata document on `/mcp`, strips `Authorization` before forwarding,
+and attaches `x-lost-plus-*` identity headers only when the caller presented a
+valid token (`worker/identity.js` reads them for attribution and nothing
+else). This Worker never validates a credential.
+
+**Rollback.** `git revert` the offending commit and `npm run deploy` again;
+there is no state to migrate. The route stays with the gateway either way.
+
+**Admission.** `worker/mcp.js` enforces, before the MCP SDK reads anything:
+41 MB body cap (413), 30 s upload deadline (408), 256 KiB cap on JSON
+outside the image string (413), 30/min and 240/hour per IP (429, best-effort
+per isolate), and two bodies in flight per isolate (503).
+
+Bump `CACHE` in `public/sw.js` when shipping app changes so installed copies
+pick up the update.
 
 The icon lab is a static page under `public/icon-lab.html`; its `/save-icons`
-and `/save-zip` helpers wrote through the old Python host and no longer have
-a backend. Download the icons from the lab and commit them by hand.
+and `/save-zip` helpers have no backend. Download the icons from the lab and
+commit them by hand.

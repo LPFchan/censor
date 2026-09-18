@@ -1,15 +1,31 @@
 name = "censor"
 main = "worker/index.js"
 compatibility_date = "2026-09-01"
+
+# Not on a workers.dev subdomain. wrangler defaults `workers_dev` to
+# `routes.length === 0`, so with no routes below this line is what keeps the
+# Worker off censor.<subdomain>.workers.dev.
 workers_dev = false
 
 # Static PWA served from the asset store. The worker script handles /mcp,
 # /healthz and the MCP server card, and rewrites cache headers on the app
-# files; everything else is served from public/ untouched.
+# files; everything else is served from public/ untouched. run_worker_first
+# is what lets the script see every request, including over a service binding.
 [assets]
 directory = "./public"
 binding = "ASSETS"
 run_worker_first = true
 
-# Production routes are applied through the Cloudflare API at deploy time
-# (censor.lost.plus/*), matching the existing zone's API-driven setup.
+# ---------------------------------------------------------------------------
+# NO ROUTES. THIS IS DELIBERATE.
+# ---------------------------------------------------------------------------
+#
+# censor.lost.plus/* is held by the `auth-gateway` Worker
+# (auth/gateway/config/cloudflare.gateway.json), which reaches this Worker over
+# its CENSOR service binding: `/mcp` under the `mcp` policy with
+# allow_anonymous (scope `censor`), and `/` under `public` for the app, the
+# server card and /healthz. This Worker is a route-less backend.
+#
+# Deploying a Worker replaces its route list with what this file says, and an
+# absent list means wrangler leaves the zone alone. Adding a route here would
+# steal the hostname back from the gateway.
