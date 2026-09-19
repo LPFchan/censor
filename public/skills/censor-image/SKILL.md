@@ -56,10 +56,23 @@ call-level values are defaults.
 }
 ```
 
+## JPEG in, JPEG out
+
+A JPEG censored to JPEG (the default `output_format: "original"`) is edited
+in place: the result keeps the **original resolution**, every pixel outside
+your regions is **unchanged byte for byte**, and each censored area **snaps
+outward to the JPEG's block grid** (16 px for typical 4:2:0 photos, 8 px for
+4:4:4), so the censored box can be up to 15 px larger on each side than you
+asked; it is never smaller. Ellipses keep their shape. Colour profile and
+orientation are kept; other metadata (GPS, camera, comments) is dropped. The
+response text says "in place at full resolution" when this path was used.
+
 ## limits
 
-10 MB image file, 8192 px per side, 64 regions per call. The working raster
-is capped at 4 megapixels:
+10 MB image file, 8192 px per side, 64 regions per call. In-place JPEG
+editing covers photos up to about 26 megapixels (4:2:0) or 13 (4:4:4).
+Everything else — PNG input, converting between formats, or a JPEG above
+that — goes through a working raster capped at 4 megapixels:
 
 - A **JPEG above 4 MP is decoded downscaled** by 1/2, 1/4 or 1/8 (the
   smallest that fits: a 12 MP photo comes back at 2000x1500, 24 MP at 1/4) and
@@ -68,6 +81,8 @@ is capped at 4 megapixels:
   response text says the source size, the scale and the output size.
 - A **PNG above 4 MP is rejected** with a tool error (PNG has no scaled
   decode): downscale it first, or send it as JPEG.
+- Arithmetic-coded and 12-bit JPEGs are refused with a tool error; re-save
+  them as ordinary (Huffman, 8-bit) JPEG first.
 
 Rate limits are lax (default 30 requests/minute per IP) but exist — batch all
 regions for one image into a single `censor_image` call instead of calling
