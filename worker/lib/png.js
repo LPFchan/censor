@@ -23,14 +23,17 @@ export function decodePng(bytes) {
   // UPNG.toRGBA8 returns one ArrayBuffer per frame; single-frame PNGs are
   // the only sane input for a censor tool.
   const frames = UPNG.toRGBA8(img);
-  const raster = new Raster(img.width, img.height);
-  raster.data.set(new Uint8ClampedArray(frames[0]));
-  return raster;
+  // toRGBA8 already allocated a fresh RGBA buffer; wrap it, do not copy it.
+  return new Raster(img.width, img.height, new Uint8ClampedArray(frames[0]));
 }
 
 export function encodePng(raster) {
+  const { data } = raster;
+  // UPNG reads the buffer without writing to it; hand it over as-is when the
+  // view covers the whole buffer instead of copying 4 bytes per pixel.
+  const whole = data.byteOffset === 0 && data.byteLength === data.buffer.byteLength;
   const buf = UPNG.encode(
-    [raster.data.buffer.slice(raster.data.byteOffset, raster.data.byteOffset + raster.data.byteLength)],
+    [whole ? data.buffer : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)],
     raster.width,
     raster.height,
     0,

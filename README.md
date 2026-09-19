@@ -39,6 +39,18 @@ The same effects are available to agents as an MCP server at
 processed in memory and discarded immediately after each response; nothing
 is stored. Rate limits are lax (30/min and 240/hour per IP).
 
+**Limits** (a Worker isolate has 128 MB, and these are what fits in it with
+headroom): 10 MB image file, 8192 px per side, 64 regions per call. The
+working raster is capped at **4 megapixels**. A JPEG above that is decoded
+downscaled by 1/2, 1/4 or 1/8 (the smallest that fits; a 12 MP phone photo
+comes back at 2000x1500, a 48 MP one at 1/4) and the censored result is
+returned at that reduced size; region coordinates are still given in source
+pixels and scaled server-side, and the response text states the source size,
+the scale and the output size. A PNG above 4 MP is rejected from its header
+with a tool error asking the caller to downscale first or send JPEG (PNG has
+no scaled decode). `get_image_info` reads the header only and always reports
+the source dimensions.
+
 Auth is optional. The endpoint sits behind the Common Auth gateway with
 anonymous access allowed: no credential is needed, and a Common Auth token
 (`Authorization: Bearer ...`) is accepted and attributed but unlocks nothing
@@ -73,6 +85,15 @@ for PNG, mozjpeg for JPEG); the effects are plain typed-array math. The
 Worker holds no state: no KV, D1, R2 or Cache API, and every image is gone
 when its response is returned.
 
+**JPEG codec.** `worker/lib/mozjpeg_{dec,enc}.{js,wasm}` are built from
+`codec/dec.cpp` and `codec/enc.cpp` by `codec/build.sh` (docker +
+`emscripten/emsdk`; mozjpeg v4.1.5, licence in `worker/lib/LICENSE.mozjpeg.md`).
+The decoder takes a DCT scale denominator (1, 2, 4, 8) so a large photo is
+decoded straight to the 4 MP working size without the full raster ever
+existing. The encoder is baseline, quality 92, mozjpeg's fastest profile (no
+trellis, no progressive, no Huffman optimisation): the stock @jsquash build
+spent ~1.9 s of CPU encoding a 1.5 MP image; this one spends ~45 ms.
+
 **Routing.** The Worker declares no route of its own and is off workers.dev.
 `censor.lost.plus/*` belongs to the `auth-gateway` Worker (repo `auth`,
 `gateway/config/cloudflare.gateway.json`), which reaches this Worker over its
@@ -89,9 +110,20 @@ package, for attribution and nothing else). This Worker never validates a creden
 there is no state to migrate. The route stays with the gateway either way.
 
 **Admission.** `worker/mcp.js` enforces, before the MCP SDK reads anything:
-41 MB body cap (413), 30 s upload deadline (408), 256 KiB cap on JSON
-outside the image string (413), 30/min and 240/hour per IP (429, best-effort
-per isolate), and two bodies in flight per isolate (503).
+14 MB body cap (413; the 10 MB image cap as base64 plus envelope), 30 s
+upload deadline (408), 256 KiB cap on JSON outside the image string (413),
+30/min and 240/hour per IP (429, best-effort per isolate), and two bodies in
+flight per isolate (503).
+
+**Memory budget.** For one request the isolate holds, at peak: the body
+bytes, the decoded text and the parsed base64 string during `JSON.parse`
+(3x the base64 size, so ~40 MB at the 14 MB body cap), then the image bytes
+plus the decoder's copy of them, the working raster (16 MB at 4 MP; the
+decoder writes it once in WASM memory and the binding copies it out), region-
+sized scratch layers, and on encode a second copy of the raster inside the
+encoder's WASM heap plus the output. Both WASM heaps persist per isolate and
+never shrink, which is why the raster cap is 4 MP and not 12: 12 MP would
+put ~150 MB of raster copies alone through a 128 MB isolate.
 
 Bump `CACHE` in `public/sw.js` when shipping app changes so installed copies
 pick up the update.

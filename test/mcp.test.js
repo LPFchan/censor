@@ -11,7 +11,9 @@ import {
   CENSOR_IMAGE_INPUT_SCHEMA, GET_IMAGE_INFO_INPUT_SCHEMA,
   MAX_MCP_BODY, MAX_JSON_NON_IMAGE, RATE_PER_MINUTE, MAX_INFLIGHT,
 } from '../worker/mcp.js';
-import { decodeImage } from '../worker/lib/effects.js';
+import { decodeImage, MAX_PIXELS } from '../worker/lib/effects.js';
+import { Raster } from '../worker/lib/resize.js';
+import { encodeJpeg } from '../worker/lib/jpeg.js';
 import { TINY_PNG, TINY_JPG, EXIF6_JPG, BOMB_HEADER_PNG } from './fixtures.js';
 
 const ORIGIN = 'https://censor.lost.plus';
@@ -161,6 +163,36 @@ function pixel(raster, x, y) {
   return Array.from(raster.data.subarray(i, i + 3));
 }
 
+/**
+ * A synthetic photo-sized JPEG, made here rather than committed: vertical
+ * black/white stripes 4 px wide, so a mosaic cell averages to mid grey while
+ * untouched areas keep their contrast even after a 1/2 decode.
+ */
+async function stripedJpeg(width, height) {
+  const r = new Raster(width, height);
+  const row = new Uint8ClampedArray(width * 4);
+  for (let x = 0; x < width; x++) {
+    const v = (x >> 2) & 1 ? 255 : 0;
+    row[x * 4] = v; row[x * 4 + 1] = v; row[x * 4 + 2] = v; row[x * 4 + 3] = 255;
+  }
+  for (let y = 0; y < height; y++) r.data.set(row, y * width * 4);
+  return (await encodeJpeg(r)).toBase64();
+}
+
+/** tiny.png with its IHDR rewritten to declare width x height (CRC left stale). */
+function pngDeclaring(width, height) {
+  const bytes = Uint8Array.fromBase64(TINY_PNG);
+  new DataView(bytes.buffer).setUint32(16, width);
+  new DataView(bytes.buffer).setUint32(20, height);
+  return bytes.toBase64();
+}
+
+function rowContrast(raster, y, x0, x1) {
+  let lo = 255, hi = 0;
+  for (let x = x0; x < x1; x++) { const v = raster.data[(y * raster.width + x) * 4]; if (v < lo) lo = v; if (v > hi) hi = v; }
+  return hi - lo;
+}
+
 describe('get_image_info', () => {
   it('reads a PNG', async () => {
     const result = await callTool('get_image_info', { image_b64: TINY_PNG });
@@ -177,6 +209,11 @@ describe('get_image_info', () => {
   it('reports EXIF-rotated dimensions as the caller sees them', async () => {
     const result = await callTool('get_image_info', { image_b64: EXIF6_JPG });
     expect(result.structuredContent).toEqual({ width: 4, height: 6, format: 'JPEG' });
+  });
+
+  it('reads the header only: an over-budget PNG still reports its size', async () => {
+    const result = await callTool('get_image_info', { image_b64: pngDeclaring(2100, 2000) });
+    expect(result.structuredContent).toEqual({ width: 2100, height: 2000, format: 'PNG' });
   });
 });
 
@@ -231,6 +268,40 @@ describe('censor_image', () => {
     expect(result.content[1].text).toMatch(/Censored 2 region\(s\)/);
   });
 
+  it('censors a 1.5 MP JPEG at full size', async () => {
+    const image_b64 = await stripedJpeg(1500, 1000);
+    const result = await callTool('censor_image', {
+      image_b64, regions: [{ x: 0, y: 0, w: 750, h: 1000 }], strength: 32,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[1].text).toMatch(/^Censored 1 region\(s\) on a 1500x1000 image; output JPEG/);
+    const { raster } = await decodeImage({ image_b64: result.content[0].data });
+    expect([raster.width, raster.height]).toEqual([1500, 1000]);
+    expect(rowContrast(raster, 500, 0, 700)).toBeLessThan(40);      // mosaicked: flat grey
+    expect(rowContrast(raster, 500, 800, 1500)).toBeGreaterThan(150); // untouched: stripes
+  });
+
+  it('decodes a 12 MP JPEG at 1/2, scales the regions, and says so', async () => {
+    const image_b64 = await stripedJpeg(4000, 3000);
+    expect(4000 * 3000).toBeGreaterThan(MAX_PIXELS);
+    const info = await callTool('get_image_info', { image_b64 });
+    expect(info.structuredContent).toEqual({ width: 4000, height: 3000, format: 'JPEG' });
+
+    // Region in SOURCE pixels: the left half.
+    const result = await callTool('censor_image', {
+      image_b64, regions: [{ x: 0, y: 0, w: 2000, h: 3000 }], strength: 32,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[1].text).toMatch(
+      /^Censored 1 region\(s\) on a 4000x3000 image decoded at 1\/2 \(output is 2000x1500\); output JPEG/,
+    );
+    const { raster, scale } = await decodeImage({ image_b64: result.content[0].data });
+    expect(scale).toBe(1);
+    expect([raster.width, raster.height]).toEqual([2000, 1500]);
+    expect(rowContrast(raster, 750, 0, 950)).toBeLessThan(40);        // left half mosaicked
+    expect(rowContrast(raster, 750, 1050, 2000)).toBeGreaterThan(100); // right half still striped
+  }, 30_000);
+
   it('works over the 2026-07-28 envelope too', async () => {
     const result = await callTool('censor_image', {
       image_b64: TINY_PNG,
@@ -258,6 +329,8 @@ describe('censor_image', () => {
       ['too many regions', { image_b64: TINY_PNG, regions: Array.from({ length: 65 }, () => ({ x: 0, y: 0, w: 1, h: 1 })) }, 'too many regions'],
       ['bad output_format', { image_b64: TINY_PNG, regions: [{ x: 0, y: 0, w: 1, h: 1 }], output_format: 'gif' }, 'Input validation error'],
       ['header-declared bomb', { image_b64: BOMB_HEADER_PNG, regions: [{ x: 0, y: 0, w: 1, h: 1 }] }, 'image dimensions exceed 8192px'],
+      ['PNG over the pixel budget (rejected from the header, never decoded)', { image_b64: pngDeclaring(2100, 2000), regions: [{ x: 0, y: 0, w: 1, h: 1 }] }, 'PNG is 2100x2000, above the 4 megapixel limit. PNG is not downscaled here: downscale it first'],
+      ['image over the byte cap', { image_b64: 'A'.repeat(13_400_000), regions: [{ x: 0, y: 0, w: 1, h: 1 }] }, 'image is too large (10 MB limit)'],
     ];
     for (const [label, args, message] of cases) {
       it(label, async () => {

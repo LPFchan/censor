@@ -33,15 +33,18 @@ import {
 } from '@modelcontextprotocol/server';
 
 import {
-  CensorError, decodeImage, encodeImage, censor,
+  CensorError, decodeImage, encodeImage, censor, imageInfo as headerInfo,
+  MAX_PIXELS, MAX_IMAGE_BYTES, MAX_DIMENSION,
 } from './lib/effects.js';
 import { identityFrom } from '@lpfchan/gateway-identity';
 
 export const SERVER_INFO = { name: 'censor', version: '2.1.0' };
 
-// One image is ~40 MB of base64; anything past it in one JSON-RPC body is
-// attack surface, not a request. Same bound as the Python server.
-export const MAX_MCP_BODY = 41_000_000;
+// The image cap (MAX_IMAGE_BYTES) as base64, plus the JSON envelope; anything
+// past it in one JSON-RPC body is attack surface, not a request. The body
+// bytes, the decoded text and the parsed base64 string are all alive at once
+// during JSON.parse, so this cap is also a memory bound.
+export const MAX_MCP_BODY = 14_000_000;
 
 // Cap on JSON bytes EXCLUDING the single largest string literal (the image
 // payload). A legitimate call is one envelope, one params object, and at most
@@ -54,7 +57,7 @@ export const MAX_JSON_NON_IMAGE = 262_144;
 export const BODY_READ_TIMEOUT_MS = 30_000;
 
 // Bodies buffered at once in this isolate. A Worker isolate has 128 MB; two
-// ~40 MB bodies plus their rasters is already the ceiling.
+// 14 MB bodies plus their rasters and the codecs' heaps is the ceiling.
 export const MAX_INFLIGHT = 2;
 
 // Fixed-window per-IP rate limit, same lax defaults as the Python server
@@ -136,17 +139,30 @@ export const GET_IMAGE_INFO_INPUT_SCHEMA = {
   },
 };
 
+const MP = MAX_PIXELS / 1_000_000;
+const MB = MAX_IMAGE_BYTES / 1_000_000;
+
+export const LIMITS_TEXT =
+  `Limits: ${MB} MB image file, ${MAX_DIMENSION} px per side. ` +
+  `The working raster is capped at ${MP} megapixels: a JPEG above that is decoded ` +
+  'downscaled by 1/2, 1/4 or 1/8 (the smallest that fits) and the censored result ' +
+  'is returned at that reduced size; region coordinates are still given in ' +
+  'source pixels and are scaled for you. A PNG above the cap is rejected: ' +
+  'downscale it first or send it as JPEG.';
+
 export const SERVER_INSTRUCTIONS =
   'Apply mosaic (pixelation) or Gaussian blur to regions of an image. ' +
   'Coordinates are pixels in the source image with the origin at the top-left. ' +
   'Pass regions covering whatever should be hidden (faces, text, plates, screens). ' +
-  'The image is processed in memory and discarded immediately after the response.';
+  'The image is processed in memory and discarded immediately after the response. ' +
+  LIMITS_TEXT;
 
 function toolError(message) {
   return { isError: true, content: [{ type: 'text', text: message }] };
 }
 
 function bytesToB64(bytes) {
+  if (typeof bytes.toBase64 === 'function') return bytes.toBase64();
   // chunked to avoid call-stack limits on large images
   let bin = '';
   const CHUNK = 0x8000;
@@ -185,17 +201,26 @@ async function censorImage(a) {
     return merged;
   });
 
-  const { raster, format } = await decodeImage(a);
-  const result = censor(raster, regions);
+  const { raster, format, source, scale } = await decodeImage(a);
+  // Regions arrive in source pixels; the raster may be a 1/scale decode.
+  const scaled = scale === 1 ? regions : regions.map((r) => ({
+    ...r,
+    x: Number(r.x) / scale, y: Number(r.y) / scale, w: Number(r.w) / scale, h: Number(r.h) / scale,
+  }));
+  const result = censor(raster, scaled);
   let fmt = String(a.output_format ?? 'original').toUpperCase();
   if (fmt === 'ORIGINAL') fmt = format === 'JPEG' ? 'JPEG' : 'PNG';
   if (fmt !== 'PNG' && fmt !== 'JPEG') {
     throw new CensorError("output_format must be 'png', 'jpeg', or 'original'");
   }
-  const b64 = bytesToB64(await encodeImage(result, fmt));
+  const encoded = await encodeImage(result, fmt);
+  const b64 = bytesToB64(encoded);
+  const size = scale === 1
+    ? `a ${result.width}x${result.height} image`
+    : `a ${source.width}x${source.height} image decoded at 1/${scale} (output is ${result.width}x${result.height})`;
   const meta =
-    `Censored ${regions.length} region(s) on a ${result.width}x${result.height} image; ` +
-    `output ${fmt}, ${Math.ceil(b64.length * 3 / 4 / 1024)} KiB. ` +
+    `Censored ${regions.length} region(s) on ${size}; ` +
+    `output ${fmt}, ${Math.ceil(encoded.length / 1024)} KiB. ` +
     'The source image was processed in memory and discarded.';
   return {
     content: [
@@ -206,8 +231,8 @@ async function censorImage(a) {
 }
 
 async function imageInfo(a) {
-  const { raster, format } = await decodeImage(a);
-  const info = { width: raster.width, height: raster.height, format };
+  // Header only: no pixel decode for a dimensions lookup.
+  const info = headerInfo(a);
   return {
     content: [{ type: 'text', text: JSON.stringify(info) }],
     structuredContent: info,
@@ -234,7 +259,7 @@ export function buildServer(caller = null) {
       'optionally with its own shape (rect or ellipse), effect, and strength. ' +
       'The call-level effect/strength act as defaults for regions that don\'t set ' +
       'their own. Returns the censored image and basic metadata. Nothing is stored: ' +
-      'the image lives in memory only for the duration of the call.',
+      'the image lives in memory only for the duration of the call. ' + LIMITS_TEXT,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputSchema: fromJsonSchema(CENSOR_IMAGE_INPUT_SCHEMA),
   }, (args) => {
@@ -247,7 +272,7 @@ export function buildServer(caller = null) {
     description:
       'Return an image\'s width, height, and format. Call this first when you only ' +
       'have the image and need to plan censor_image regions in real pixel coordinates. ' +
-      'Nothing is stored.',
+      'Reads the header only. Nothing is stored.',
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     inputSchema: fromJsonSchema(GET_IMAGE_INFO_INPUT_SCHEMA),
   }, (args) => {
@@ -312,7 +337,7 @@ async function readBody(request, timeoutMs) {
 /**
  * Length of the longest JSON string literal's content, found in one pass with
  * O(1) extra memory (string boundaries and backslash escapes are tracked, no
- * regex, so a 40 MB base64 payload cannot trigger backtracking). In an honest
+ * regex, so a 13 MB base64 payload cannot trigger backtracking). In an honest
  * request that string is the image; everything else must fit MAX_JSON_NON_IMAGE.
  */
 export function largestStringLength(bytes) {

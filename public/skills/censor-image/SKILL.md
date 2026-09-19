@@ -58,7 +58,17 @@ call-level values are defaults.
 
 ## limits
 
-30 MB decoded image size, 8192 px max dimension, 64 regions per call.
+10 MB image file, 8192 px per side, 64 regions per call. The working raster
+is capped at 4 megapixels:
+
+- A **JPEG above 4 MP is decoded downscaled** by 1/2, 1/4 or 1/8 (the
+  smallest that fits: a 12 MP photo comes back at 2000x1500, 24 MP at 1/4) and
+  the censored result is returned at that reduced size. Keep giving regions in
+  source pixels (what `get_image_info` reports); they are scaled for you. The
+  response text says the source size, the scale and the output size.
+- A **PNG above 4 MP is rejected** with a tool error (PNG has no scaled
+  decode): downscale it first, or send it as JPEG.
+
 Rate limits are lax (default 30 requests/minute per IP) but exist — batch all
 regions for one image into a single `censor_image` call instead of calling
 once per region.

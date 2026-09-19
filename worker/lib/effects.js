@@ -1,19 +1,26 @@
 // Port of the original Pillow effects server to the Workers runtime.
 // Same memory philosophy: no disk, images exist only as rasters for the
-// duration of one call. The one deliberate simplification versus the
-// Pillow server: region processing is not chunked into 64-row bands,
-// because a Worker's 128 MB is per-request (no concurrency to budget
-// against) and a 12 MP raster plus a same-size layer is ~96 MB worst
-// case. Chunks and full layers produce identical pixels, so this changes
-// nothing a caller can observe.
+// duration of one call. Memory is the binding constraint (a Worker isolate
+// has 128 MB, and the base64 body, the raster and both codecs' WASM heaps
+// all share it), so the raster this module works on is capped at MAX_PIXELS:
+// a larger JPEG is decoded straight to 1/2, 1/4 or 1/8 size by libjpeg's
+// DCT scaling (the full raster never exists) and a larger PNG is refused
+// from its header before any decode. Effects are applied in place; the only
+// allocations are region-sized scratch layers.
 
 import { Raster, resizeBilinear, resizeNearest, gaussianBlur } from './resize.js';
 import { decodePng, encodePng } from './png.js';
 import { decodeJpeg, encodeJpeg } from './jpeg.js';
 
+// Largest raster this Worker will hold: 4 MP = 16 MB of RGBA. JPEGs above it
+// are decoded downscaled; PNGs above it are rejected.
+export const MAX_PIXELS = 4_000_000;
+// Header-declared sanity cap on either side, before scaling is considered.
 export const MAX_DIMENSION = 8192;
-export const MAX_PIXELS = 12_000_000;
-export const MAX_BASE64_CHARS = 40_000_000; // ~30 MB decoded
+// Decoded image bytes. The base64 string, its bytes, and the codec's copy
+// of them are all alive at once during decode.
+export const MAX_IMAGE_BYTES = 10_000_000;
+export const MAX_BASE64_CHARS = Math.ceil(MAX_IMAGE_BYTES / 3) * 4;
 export const MAX_REGION_COORD = 100_000;
 
 export const BLUR_MIN = 2, BLUR_MAX = 80;
@@ -31,16 +38,18 @@ function parseDataUrl(data) {
   return data.slice(comma + 1);
 }
 
-function b64ToBytes(b64) {
-  let bin;
+// Uint8Array.fromBase64 decodes straight into bytes; the atob fallback
+// holds an extra binary string the size of the image for the loop's duration.
+export function b64ToBytes(b64) {
   try {
-    bin = atob(b64);
+    if (typeof Uint8Array.fromBase64 === 'function') return Uint8Array.fromBase64(b64);
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
   } catch (e) {
     throw new CensorError('image data is not valid base64');
   }
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
 }
 
 function sniffFormat(bytes) {
@@ -49,7 +58,8 @@ function sniffFormat(bytes) {
   throw new CensorError('could not decode image (supported: PNG, JPEG)');
 }
 
-export async function decodeImage({ image_b64, image_url }) {
+/** Base64 payload out of the tool arguments, with the size cap applied. */
+export function imageBytes({ image_b64, image_url }) {
   let payload;
   if (image_url) {
     if (image_b64) throw new CensorError('pass either image_b64 or image_url, not both');
@@ -60,30 +70,76 @@ export async function decodeImage({ image_b64, image_url }) {
     throw new CensorError('pass one of image_b64 or image_url');
   }
   if (payload.length > MAX_BASE64_CHARS) {
-    throw new CensorError('image is too large (30 MB decoded limit)');
+    throw new CensorError(`image is too large (${MAX_IMAGE_BYTES / 1_000_000} MB limit); re-encode it smaller first`);
   }
   const bytes = b64ToBytes(payload);
-  const format = sniffFormat(bytes);
-  // Reject oversized rasters from the header BEFORE paying for the decode,
-  // as the Pillow server did: a kilobyte of PNG can declare a raster that
-  // would exhaust the isolate's memory if decoded first and measured after.
-  checkDimensions(headerDimensions(bytes, format));
-  let raster = format === 'JPEG' ? await decodeJpeg(bytes) : decodePng(bytes);
-  checkDimensions(raster);
+  return { bytes, format: sniffFormat(bytes) };
+}
+
+/**
+ * Dimensions the caller sees (after EXIF rotation), read from the header
+ * alone: get_image_info never decodes pixels.
+ */
+export function imageInfo(args) {
+  const { bytes, format } = imageBytes(args);
+  let { width, height } = headerDimensions(bytes, format);
+  if (readExifOrientation(bytes) >= 5) [width, height] = [height, width];
+  return { width, height, format };
+}
+
+/**
+ * Smallest of 1, 2, 4, 8 that brings a width x height JPEG under
+ * MAX_PIXELS when decoded at 1/n (libjpeg rounds each axis up).
+ */
+export function scaleDenomFor(width, height) {
+  for (const d of [1, 2, 4, 8]) {
+    if (Math.ceil(width / d) * Math.ceil(height / d) <= MAX_PIXELS) return d;
+  }
+  return 8;
+}
+
+/**
+ * Decode to a raster of at most MAX_PIXELS. Returns the raster, the
+ * container format, the source dimensions as the caller sees them, and the
+ * scale denominator applied (1 = full size). Region coordinates stay in
+ * source pixels; the caller divides them by `scale`.
+ */
+export async function decodeImage(args) {
+  const { bytes, format } = imageBytes(args);
+  // Reject from the header BEFORE paying for the decode, as the Pillow
+  // server did: a kilobyte of PNG can declare a raster that would exhaust
+  // the isolate's memory if decoded first and measured after.
+  const header = headerDimensions(bytes, format);
+  if (Math.max(header.width, header.height) > MAX_DIMENSION) {
+    throw new CensorError(`image dimensions exceed ${MAX_DIMENSION}px`);
+  }
+  let scale = 1;
+  let raster;
+  if (format === 'JPEG') {
+    scale = scaleDenomFor(header.width, header.height);
+    raster = await decodeJpeg(bytes, scale);
+  } else {
+    if (header.width * header.height > MAX_PIXELS) {
+      throw new CensorError(
+        `PNG is ${header.width}x${header.height}, above the ${MAX_PIXELS / 1_000_000} megapixel limit. ` +
+        'PNG is not downscaled here: downscale it first, or send it as JPEG (JPEGs above the limit are decoded downscaled).',
+      );
+    }
+    raster = decodePng(bytes);
+  }
+  if (raster.width * raster.height > MAX_PIXELS) {
+    // Header lied (or a codec quirk); never let an oversized raster proceed.
+    throw new CensorError(`image exceeds ${MAX_PIXELS / 1_000_000} megapixels`);
+  }
   // The mozjpeg WASM decoder ignores EXIF orientation; normalize exactly
   // like Pillow's exif_transpose so region coordinates address the pixels
   // the caller sees.
-  raster = applyExifOrientation(raster, bytes);
-  return { raster, format };
-}
-
-function checkDimensions({ width, height }) {
-  if (Math.max(width, height) > MAX_DIMENSION) {
-    throw new CensorError(`image dimensions exceed ${MAX_DIMENSION}px`);
-  }
-  if (width * height > MAX_PIXELS) {
-    throw new CensorError(`image exceeds ${MAX_PIXELS / 1_000_000} megapixels`);
-  }
+  const orientation = format === 'JPEG' ? readExifOrientation(bytes) : 1;
+  raster = applyExifOrientation(raster, orientation);
+  const source = orientation >= 5
+    ? { width: header.height, height: header.width }
+    : { width: header.width, height: header.height };
+  return { raster, format, source, scale };
 }
 
 /**
@@ -130,11 +186,7 @@ export async function encodeImage(raster, format) {
 // address the pixels the caller sees.
 const EXIF_ORIENT_TAG = 0x0112;
 
-export function applyExifOrientation(raster, bytes) {
-  let orientation = 1;
-  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xd8) {
-    orientation = readExifOrientation(bytes);
-  }
+export function applyExifOrientation(raster, orientation) {
   if (!orientation || orientation === 1) return raster;
   const { width: w, height: h } = raster;
   const swapped = orientation >= 5; // 5-8 transpose width/height
@@ -163,7 +215,7 @@ export function applyExifOrientation(raster, bytes) {
   return out;
 }
 
-function readExifOrientation(bytes) {
+export function readExifOrientation(bytes) {
   try {
     if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return 1;
     let pos = 2;
@@ -319,8 +371,9 @@ function normalizeRegions(img, regions) {
   });
 }
 
+/** Applies the regions to `img` in place and returns it. */
 export function censor(img, regions) {
-  const out = new Raster(img.width, img.height, new Uint8ClampedArray(img.data));
+  const out = img;
   for (const r of normalizeRegions(img, regions)) {
     const [x0, y0, x1, y1] = r.box;
     const pad = padFor(r.effect, r.strength);
