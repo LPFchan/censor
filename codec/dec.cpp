@@ -1,4 +1,4 @@
-// censor's mozjpeg decoder entry point. Same shape as @jsquash/jpeg's
+// censor's libjpeg-turbo decoder entry point. Same shape as @jsquash/jpeg's
 // (a std::string of JPEG bytes in, an ImageData-like {data, width, height}
 // out) with one addition: a DCT scale denominator, so a 12 MP phone photo
 // can be decoded straight to 1/2, 1/4 or 1/8 size without ever holding the
@@ -87,6 +87,6 @@ val decode(std::string image_in, int scale_denom) {
   return result;
 }
 
-EMSCRIPTEN_BINDINGS(censor_mozjpeg_dec) {
+EMSCRIPTEN_BINDINGS(censor_jpeg_dec) {
   function("decode", &decode);
 }

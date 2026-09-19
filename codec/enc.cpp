@@ -1,9 +1,8 @@
-// censor's mozjpeg encoder entry point. Takes an RGBA buffer and a quality,
-// returns baseline JPEG bytes. Built on mozjpeg's JCP_FASTEST profile:
-// no trellis quantization, no scan optimization, no progressive, no
-// Huffman-table optimization. The tool re-encodes a photo once so the
-// caller can forward it; mozjpeg's size tuning costs seconds of CPU per
-// megapixel in WASM and buys nothing here.
+// censor's libjpeg-turbo encoder entry point. Takes an RGBA buffer and a
+// quality, returns baseline JPEG bytes: no progressive, no Huffman-table
+// optimization, no trellis (libjpeg-turbo has none). The tool re-encodes a
+// photo once so the caller can forward it; mozjpeg-style size tuning cost
+// seconds of CPU per megapixel in WASM and bought nothing here.
 
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
@@ -55,8 +54,6 @@ val encode(std::string image_in, int width, int height, int quality) {
   cinfo.image_height = height;
   cinfo.input_components = 4;
   cinfo.in_color_space = JCS_EXT_RGBA;
-  // Must precede jpeg_set_defaults: the profile decides what "default" means.
-  jpeg_c_set_int_param(&cinfo, JINT_COMPRESS_PROFILE, JCP_FASTEST);
   jpeg_set_defaults(&cinfo);
   jpeg_set_quality(&cinfo, quality, TRUE);
   cinfo.optimize_coding = FALSE;
@@ -77,6 +74,6 @@ val encode(std::string image_in, int width, int height, int quality) {
   return result;
 }
 
-EMSCRIPTEN_BINDINGS(censor_mozjpeg_enc) {
+EMSCRIPTEN_BINDINGS(censor_jpeg_enc) {
   function("encode", &encode);
 }

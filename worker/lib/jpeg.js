@@ -1,14 +1,15 @@
-// JPEG codec: mozjpeg compiled to WASM from codec/{dec,enc}.cpp (see
-// codec/build.sh; license in LICENSE.mozjpeg.md). The emscripten loaders
-// fetch "mozjpeg_*.wasm" over HTTP by default, which cannot work inside a
+// JPEG codec: libjpeg-turbo 3.2.0 with hand-written WebAssembly SIMD128
+// kernels, compiled from codec/{dec,enc}.cpp (see codec/build.sh; license in
+// LICENSE.libjpeg-turbo.md). The emscripten loaders fetch "jpeg_*.wasm" over
+// HTTP by default, which cannot work inside a
 // Worker — the module URL is virtual — so we inject the compiled module
 // directly through instantiateWasm. The modules are instantiated once per
 // isolate; their linear memory is reused across requests.
 
-import mozDecFactory from './mozjpeg_dec.js';
-import mozEncFactory from './mozjpeg_enc.js';
-import decWasm from './mozjpeg_dec.wasm';
-import encWasm from './mozjpeg_enc.wasm';
+import decFactory from './jpeg_dec.js';
+import encFactory from './jpeg_enc.js';
+import decWasm from './jpeg_dec.wasm';
+import encWasm from './jpeg_enc.wasm';
 import { Raster } from './resize.js';
 import { CensorError } from './errors.js';
 
@@ -23,13 +24,13 @@ function wasmModule(binary) {
 
 let decModule;
 async function decoder() {
-  if (!decModule) decModule = mozDecFactory(wasmModule(decWasm));
+  if (!decModule) decModule = decFactory(wasmModule(decWasm));
   return decModule;
 }
 
 let encModule;
 async function encoder() {
-  if (!encModule) encModule = mozEncFactory(wasmModule(encWasm));
+  if (!encModule) encModule = encFactory(wasmModule(encWasm));
   return encModule;
 }
 
@@ -51,8 +52,8 @@ export async function decodeJpeg(bytes, scaleDenom = 1) {
   return new Raster(result.width, result.height, result.data);
 }
 
-// Quality 92 to match the Pillow server; baseline 4:2:0, no trellis, no
-// Huffman optimization (mozjpeg's JCP_FASTEST profile, set in enc.cpp).
+// Quality 92 to match the Pillow server; baseline 4:2:0, no Huffman
+// optimization (enc.cpp).
 export const JPEG_QUALITY = 92;
 
 export async function encodeJpeg(raster) {

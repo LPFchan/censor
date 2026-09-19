@@ -81,18 +81,22 @@ One Cloudflare Worker, `censor` (`wrangler.toml`), deployed with
 deploy`; nothing to export by hand. The static PWA is served from the Worker's asset store
 (`public/`); `/mcp`, `/healthz` and the MCP server card are handled by the
 script (`worker/`). Image decode/encode runs on bundled WASM codecs (UPNG.js
-for PNG, mozjpeg for JPEG); the effects are plain typed-array math. The
+for PNG, libjpeg-turbo for JPEG); the effects are plain typed-array math. The
 Worker holds no state: no KV, D1, R2 or Cache API, and every image is gone
 when its response is returned.
 
-**JPEG codec.** `worker/lib/mozjpeg_{dec,enc}.{js,wasm}` are built from
+**JPEG codec.** `worker/lib/jpeg_{dec,enc}.{js,wasm}` are built from
 `codec/dec.cpp` and `codec/enc.cpp` by `codec/build.sh` (docker +
-`emscripten/emsdk`; mozjpeg v4.1.5, licence in `worker/lib/LICENSE.mozjpeg.md`).
-The decoder takes a DCT scale denominator (1, 2, 4, 8) so a large photo is
-decoded straight to the 4 MP working size without the full raster ever
-existing. The encoder is baseline, quality 92, mozjpeg's fastest profile (no
-trellis, no progressive, no Huffman optimisation): the stock @jsquash build
-spent ~1.9 s of CPU encoding a 1.5 MP image; this one spends ~45 ms.
+`emscripten/emsdk`; libjpeg-turbo 3.2.0 plus `codec/wasm-simd128.patch`, the
+hand-written WebAssembly SIMD128 kernel set from jerbob92/libjpeg-turbo, licence
+in `worker/lib/LICENSE.libjpeg-turbo.md`). The SIMD kernels are bit-identical
+to libjpeg-turbo's scalar paths and roughly halve codec CPU under V8 (1.5 MP:
+decode 40 -> 27 ms, encode 42 -> 26 ms on the OCI arm64 box; a larger gain on
+x86). The decoder takes a DCT scale denominator (1, 2, 4, 8) so a large photo
+is decoded straight to the 4 MP working size without the full raster ever
+existing. The encoder is baseline, quality 92, no progressive, no Huffman
+optimisation: the earlier mozjpeg/@jsquash build spent ~1.9 s of CPU encoding
+a 1.5 MP image.
 
 **Routing.** The Worker declares no route of its own and is off workers.dev.
 `censor.lost.plus/*` belongs to the `auth-gateway` Worker (repo `auth`,
