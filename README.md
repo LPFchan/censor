@@ -81,8 +81,9 @@ when its response is returned.
 the app, the server card and `/healthz`. The gateway owns CORS and the
 OAuth metadata document on `/mcp`, strips `Authorization` before forwarding,
 and attaches `x-lost-plus-*` identity headers only when the caller presented a
-valid token (`worker/identity.js` reads them for attribution and nothing
-else). This Worker never validates a credential.
+valid token (`worker/mcp.js` reads them with the shared
+[`@lost-plus/gateway-identity`](https://github.com/LPFchan/gateway-identity)
+package, for attribution and nothing else). This Worker never validates a credential.
 
 **Rollback.** `git revert` the offending commit and `npm run deploy` again;
 there is no state to migrate. The route stays with the gateway either way.

@@ -16,7 +16,13 @@
 // Common Auth cloud gateway; on its `mcp` route the gateway answers OPTIONS
 // preflight and /.well-known/oauth-protected-resource itself, strips the
 // backend's Access-Control-Allow-Origin/Expose-Headers, and strips
-// Authorization before forwarding. See identity.js for what arrives instead.
+// Authorization before forwarding. What arrives instead, when the caller
+// presented a token, is the x-lost-plus-* identity headers, read by the shared
+// @lost-plus/gateway-identity parser. Identity is optional here: the `/mcp`
+// route is `allow_anonymous`, so a request with no identity headers is a
+// legitimate anonymous caller, `identityFrom` returns null for it, and it is
+// served exactly like an identified one. Identity gates nothing; it is
+// logged for attribution only.
 
 import {
   McpServer,
@@ -29,7 +35,7 @@ import {
 import {
   CensorError, decodeImage, encodeImage, censor,
 } from './lib/effects.js';
-import { identityFrom } from './identity.js';
+import { identityFrom } from '@lost-plus/gateway-identity';
 
 export const SERVER_INFO = { name: 'censor', version: '2.1.0' };
 
