@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@lost-plus/gateway-identity": "github:LPFchan/gateway-identity#v1.0.0",
+    "@lpfchan/gateway-identity": "^1.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "pako": "^2.1.0"
   },

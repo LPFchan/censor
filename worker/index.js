@@ -6,7 +6,7 @@
 // its CENSOR service binding: `/mcp` under the `mcp` policy with
 // allow_anonymous, everything else under `public`. Nothing here validates a
 // credential; identity, when the gateway attached one, is read in mcp.js
-// (via @lost-plus/gateway-identity) for attribution only.
+// (via @lpfchan/gateway-identity) for attribution only.
 //
 // Privacy invariant is unchanged: image bytes live only in this request's
 // isolate memory and are dropped when the response is returned. No KV, no
