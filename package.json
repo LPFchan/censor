@@ -14,7 +14,7 @@
   "version": "2.1.0",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "passage run --env CLOUDFLARE_API_TOKEN=infra/CF_MASTER_TOKEN -- wrangler deploy",
     "test": "vitest run"
   }
 }
