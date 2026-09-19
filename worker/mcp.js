@@ -33,12 +33,13 @@ import {
 } from '@modelcontextprotocol/server';
 
 import {
-  CensorError, decodeImage, encodeImage, censor, imageInfo as headerInfo,
-  MAX_PIXELS, MAX_IMAGE_BYTES, MAX_DIMENSION,
+  CensorError, imageBytes, decodeBytes, encodeImage, censor, censorJpegBytes,
+  headerDimensions, jpegFitsDctPath, imageInfo as headerInfo,
+  MAX_PIXELS, MAX_IMAGE_BYTES, MAX_DIMENSION, MAX_JPEG_COEF_BYTES,
 } from './lib/effects.js';
 import { identityFrom } from '@lpfchan/gateway-identity';
 
-export const SERVER_INFO = { name: 'censor', version: '2.1.0' };
+export const SERVER_INFO = { name: 'censor', version: '2.2.0' };
 
 // The image cap (MAX_IMAGE_BYTES) as base64, plus the JSON envelope; anything
 // past it in one JSON-RPC body is attack surface, not a request. The body
@@ -141,10 +142,16 @@ export const GET_IMAGE_INFO_INPUT_SCHEMA = {
 
 const MP = MAX_PIXELS / 1_000_000;
 const MB = MAX_IMAGE_BYTES / 1_000_000;
+// Coefficient arrays are 3 bytes per pixel at 4:2:0 (the common case).
+const DCT_MP = Math.floor(MAX_JPEG_COEF_BYTES / 3_000_000);
 
 export const LIMITS_TEXT =
   `Limits: ${MB} MB image file, ${MAX_DIMENSION} px per side. ` +
-  `The working raster is capped at ${MP} megapixels: a JPEG above that is decoded ` +
+  'JPEG in, JPEG out is censored in place at the original resolution ' +
+  `(up to about ${DCT_MP} megapixels with 4:2:0 chroma subsampling, half that at 4:4:4): ` +
+  'pixels outside the regions are unchanged byte for byte, and each censored area snaps ' +
+  'outward to the JPEG\'s 8- or 16-pixel block grid. Larger JPEGs, PNG input and format ' +
+  `conversions go through a ${MP}-megapixel working raster: a JPEG above that is decoded ` +
   'downscaled by 1/2, 1/4 or 1/8 (the smallest that fits) and the censored result ' +
   'is returned at that reduced size; region coordinates are still given in ' +
   'source pixels and are scaled for you. A PNG above the cap is rejected: ' +
@@ -201,23 +208,35 @@ async function censorImage(a) {
     return merged;
   });
 
-  const { raster, format, source, scale } = await decodeImage(a);
-  // Regions arrive in source pixels; the raster may be a 1/scale decode.
-  const scaled = scale === 1 ? regions : regions.map((r) => ({
-    ...r,
-    x: Number(r.x) / scale, y: Number(r.y) / scale, w: Number(r.w) / scale, h: Number(r.h) / scale,
-  }));
-  const result = censor(raster, scaled);
+  const { bytes, format } = imageBytes(a);
   let fmt = String(a.output_format ?? 'original').toUpperCase();
   if (fmt === 'ORIGINAL') fmt = format === 'JPEG' ? 'JPEG' : 'PNG';
   if (fmt !== 'PNG' && fmt !== 'JPEG') {
     throw new CensorError("output_format must be 'png', 'jpeg', or 'original'");
   }
-  const encoded = await encodeImage(result, fmt);
+
+  let encoded, size;
+  if (format === 'JPEG' && fmt === 'JPEG' && jpegFitsDctPath(headerDimensions(bytes, 'JPEG'))) {
+    // In place, in the DCT domain: original resolution, untouched pixels
+    // bit-exact, censored areas snapped outward to the block grid.
+    const out = await censorJpegBytes(bytes, regions);
+    encoded = out.bytes;
+    size = `a ${out.source.width}x${out.source.height} JPEG in place at full resolution ` +
+      '(pixels outside the regions unchanged; censored areas snapped outward to the block grid)';
+  } else {
+    const { raster, source, scale } = await decodeBytes(bytes, format);
+    // Regions arrive in source pixels; the raster may be a 1/scale decode.
+    const scaled = scale === 1 ? regions : regions.map((r) => ({
+      ...r,
+      x: Number(r.x) / scale, y: Number(r.y) / scale, w: Number(r.w) / scale, h: Number(r.h) / scale,
+    }));
+    const result = censor(raster, scaled);
+    encoded = await encodeImage(result, fmt);
+    size = scale === 1
+      ? `a ${result.width}x${result.height} image`
+      : `a ${source.width}x${source.height} image decoded at 1/${scale} (output is ${result.width}x${result.height})`;
+  }
   const b64 = bytesToB64(encoded);
-  const size = scale === 1
-    ? `a ${result.width}x${result.height} image`
-    : `a ${source.width}x${source.height} image decoded at 1/${scale} (output is ${result.width}x${result.height})`;
   const meta =
     `Censored ${regions.length} region(s) on ${size}; ` +
     `output ${fmt}, ${Math.ceil(encoded.length / 1024)} KiB. ` +

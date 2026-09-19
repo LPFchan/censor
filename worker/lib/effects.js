@@ -1,16 +1,24 @@
 // Port of the original Pillow effects server to the Workers runtime.
-// Same memory philosophy: no disk, images exist only as rasters for the
-// duration of one call. Memory is the binding constraint (a Worker isolate
-// has 128 MB, and the base64 body, the raster and both codecs' WASM heaps
-// all share it), so the raster this module works on is capped at MAX_PIXELS:
-// a larger JPEG is decoded straight to 1/2, 1/4 or 1/8 size by libjpeg's
-// DCT scaling (the full raster never exists) and a larger PNG is refused
-// from its header before any decode. Effects are applied in place; the only
-// allocations are region-sized scratch layers.
+// Same memory philosophy: no disk, images exist only for the duration of one
+// call. Memory is the binding constraint (a Worker isolate has 128 MB, and
+// the base64 body, the working buffers and the codecs' WASM heaps all share
+// it). Two paths:
+//
+// - JPEG in, JPEG out: censorJpegBytes, the DCT-domain path. The file is
+//   transcoded coefficient-for-coefficient and only the 8x8 blocks the
+//   regions touch are re-encoded, so the output keeps the source resolution,
+//   pixels outside the regions are bit-exact, and the cost is the region
+//   area plus entropy decode/encode. Memory is the coefficient arrays, capped
+//   by MAX_JPEG_COEF_BYTES from the SOF header.
+// - Everything else (PNG in, or a format conversion): the pixel path. The
+//   raster is capped at MAX_PIXELS: a larger JPEG is decoded straight to 1/2,
+//   1/4 or 1/8 size by libjpeg's DCT scaling and a larger PNG is refused from
+//   its header before any decode. Effects are applied in place; the only
+//   allocations are region-sized scratch layers.
 
 import { Raster, resizeBilinear, resizeNearest, gaussianBlur } from './resize.js';
 import { decodePng, encodePng } from './png.js';
-import { decodeJpeg, encodeJpeg } from './jpeg.js';
+import { decodeJpeg, encodeJpeg, censorJpeg } from './jpeg.js';
 
 // Largest raster this Worker will hold: 4 MP = 16 MB of RGBA. JPEGs above it
 // are decoded downscaled; PNGs above it are rejected.
@@ -20,6 +28,11 @@ export const MAX_DIMENSION = 8192;
 // Decoded image bytes. The base64 string, its bytes, and the codec's copy
 // of them are all alive at once during decode.
 export const MAX_IMAGE_BYTES = 10_000_000;
+// Ceiling on a JPEG's quantized-coefficient arrays (2 bytes per sample per
+// component, so 3 bytes/px at 4:2:0 and 6 bytes/px at 4:4:4) on the DCT
+// path. Measured peak WASM heap is the arrays plus roughly the file size
+// twice; see codec/censor.cpp and the README for the numbers behind the cap.
+export const MAX_JPEG_COEF_BYTES = 80_000_000;
 export const MAX_BASE64_CHARS = Math.ceil(MAX_IMAGE_BYTES / 3) * 4;
 export const MAX_REGION_COORD = 100_000;
 
@@ -106,6 +119,10 @@ export function scaleDenomFor(width, height) {
  */
 export async function decodeImage(args) {
   const { bytes, format } = imageBytes(args);
+  return decodeBytes(bytes, format);
+}
+
+export async function decodeBytes(bytes, format) {
   // Reject from the header BEFORE paying for the decode, as the Pillow
   // server did: a kilobyte of PNG can declare a raster that would exhaust
   // the isolate's memory if decoded first and measured after.
@@ -170,15 +187,94 @@ export function headerDimensions(bytes, format) {
     const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
     if (isSof) {
       if (pos + 9 > bytes.length) throw undecodable();
-      return { width: u16(pos + 7), height: u16(pos + 5) };
+      // Component sampling factors follow: id, (h << 4 | v), quant table.
+      const n = bytes[pos + 9];
+      const components = [];
+      for (let i = 0; i < n && pos + 12 + i * 3 < bytes.length; i++) {
+        const hv = bytes[pos + 11 + i * 3];
+        components.push({ h: Math.max(1, hv >> 4), v: Math.max(1, hv & 15) });
+      }
+      return { width: u16(pos + 7), height: u16(pos + 5), components };
     }
     pos += 2 + len;
   }
   throw undecodable();
 }
 
+/**
+ * Bytes libjpeg will hold as quantized coefficients for this frame: each
+ * component's block grid, 128 bytes a block, rounded up to whole MCUs.
+ */
+export function jpegCoefficientBytes({ width, height, components }) {
+  const hmax = Math.max(1, ...components.map((c) => c.h));
+  const vmax = Math.max(1, ...components.map((c) => c.v));
+  let total = 0;
+  for (const { h, v } of components) {
+    const wb = Math.ceil(Math.ceil(width * h / hmax) / 8 / h) * h;
+    const hb = Math.ceil(Math.ceil(height * v / vmax) / 8 / v) * v;
+    total += wb * hb * 128;
+  }
+  return total;
+}
+
 export async function encodeImage(raster, format) {
   return format === 'JPEG' ? encodeJpeg(raster) : encodePng(raster);
+}
+
+/**
+ * A box in the coordinates the caller sees (after EXIF rotation) mapped back
+ * to the JPEG's stored pixel grid; the inverse of applyExifOrientation on
+ * continuous coordinates. `w` and `h` are the STORED dimensions.
+ */
+export function toStoredBox(orientation, w, h, [x0, y0, x1, y1]) {
+  switch (orientation) {
+    case 2: return [w - x1, y0, w - x0, y1];
+    case 3: return [w - x1, h - y1, w - x0, h - y0];
+    case 4: return [x0, h - y1, x1, h - y0];
+    case 5: return [y0, x0, y1, x1];
+    case 6: return [y0, h - x1, y1, h - x0];
+    case 7: return [w - y1, h - x1, w - y0, h - x0];
+    case 8: return [w - y1, x0, w - y0, x1];
+    default: return [x0, y0, x1, y1];
+  }
+}
+
+/** Whether a JPEG's coefficient arrays fit the DCT path's memory budget. */
+export function jpegFitsDctPath(header) {
+  return jpegCoefficientBytes(header) <= MAX_JPEG_COEF_BYTES;
+}
+
+/**
+ * The JPEG path: censor `regions` (caller-visible pixel coordinates) in the
+ * DCT domain and return JPEG bytes at the source resolution. Regions are
+ * validated against the dimensions the caller sees, mapped into the stored
+ * orientation, and handed to codec/censor.cpp with the same mosaic grid
+ * anchoring the pixel path uses (image origin for rects, region origin for
+ * ellipses and rects that start off-canvas). Returns { bytes, source } where
+ * source is the caller-visible size, plus the codec's stage timings.
+ */
+export async function censorJpegBytes(bytes, regions) {
+  const header = headerDimensions(bytes, 'JPEG');
+  if (Math.max(header.width, header.height) > MAX_DIMENSION) {
+    throw new CensorError(`image dimensions exceed ${MAX_DIMENSION}px`);
+  }
+  if (!jpegFitsDctPath(header)) throw new CensorError('JPEG too large for in-place censoring');
+  const orientation = readExifOrientation(bytes);
+  const source = orientation >= 5
+    ? { width: header.height, height: header.width }
+    : { width: header.width, height: header.height };
+  const norm = normalizeRegions(source, regions);
+  const flat = new Float64Array(norm.length * 9);
+  norm.forEach((r, i) => {
+    const [x0, y0] = r.box;
+    const own = r.shape === 'ellipse' || x0 < 0 || y0 < 0;
+    const anchor = own ? [Math.floor(x0), Math.floor(y0)] : [0, 0];
+    const box = toStoredBox(orientation, header.width, header.height, r.box);
+    const [ax, ay] = toStoredBox(orientation, header.width, header.height, [anchor[0], anchor[1], anchor[0], anchor[1]]);
+    flat.set([...box, r.shape === 'ellipse' ? 1 : 0, r.effect === 'blur' ? 1 : 0, r.strength, ax, ay], i * 9);
+  });
+  const result = await censorJpeg(bytes, flat, orientation);
+  return { bytes: result.data, source, timings: { readMs: result.readMs, workMs: result.workMs, writeMs: result.writeMs } };
 }
 
 // The libjpeg-turbo WASM decoder does not apply EXIF orientation; normalize the

@@ -1,5 +1,6 @@
 #!/bin/sh
-# Rebuilds worker/lib/jpeg_{dec,enc}.{js,wasm} from dec.cpp and enc.cpp.
+# Rebuilds worker/lib/jpeg_{dec,enc,censor}.{js,wasm} from dec.cpp, enc.cpp
+# and censor.cpp.
 #
 #   ./codec/build.sh            # on the host: needs docker, clones libjpeg-turbo
 #
@@ -9,7 +10,7 @@
 # github.com/jerbob92/libjpeg-turbo, branch wasm-simd128 at 696e2a1, five
 # commits on top of the 3.2.0 tag; output is bit-identical to the scalar C
 # paths), then re-enters itself inside the emscripten/emsdk image, where it
-# builds libjpeg with WITH_WASM_SIMD=1 and links the two entry points against
+# builds libjpeg with WITH_WASM_SIMD=1 and links the three entry points against
 # it. Measured under V8 (vitest workerd pool): decode 1.5x and encode 1.6-1.9x
 # faster than the scalar build, same bytes out.
 set -eu
@@ -33,7 +34,7 @@ if [ ! -f build/libjpeg.a ]; then
     -DWITH_ARITH_ENC=0 -DWITH_ARITH_DEC=0
   cmake --build build --target jpeg-static -j4
 fi
-for name in dec enc; do
+for name in dec enc censor; do
   em++ -O3 -msimd128 --bind "$name.cpp" build/libjpeg.a \
     -I libjpeg-turbo -I libjpeg-turbo/src -I build \
     -s ALLOW_MEMORY_GROWTH=1 -s INITIAL_MEMORY=16MB \

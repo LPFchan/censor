@@ -11,10 +11,16 @@ import {
   CENSOR_IMAGE_INPUT_SCHEMA, GET_IMAGE_INFO_INPUT_SCHEMA,
   MAX_MCP_BODY, MAX_JSON_NON_IMAGE, RATE_PER_MINUTE, MAX_INFLIGHT,
 } from '../worker/mcp.js';
-import { decodeImage, MAX_PIXELS } from '../worker/lib/effects.js';
+import {
+  decodeImage, censor, applyExifOrientation, toStoredBox, readExifOrientation,
+  headerDimensions, jpegFitsDctPath, MAX_PIXELS,
+} from '../worker/lib/effects.js';
 import { Raster } from '../worker/lib/resize.js';
 import { encodeJpeg } from '../worker/lib/jpeg.js';
-import { TINY_PNG, TINY_JPG, EXIF6_JPG, BOMB_HEADER_PNG } from './fixtures.js';
+import {
+  TINY_PNG, TINY_JPG, EXIF6_JPG, BOMB_HEADER_PNG,
+  GRAD444_JPG, GRAD420_JPG, GRAD_PROG_JPG, EXIF6_MARK_JPG,
+} from './fixtures.js';
 
 const ORIGIN = 'https://censor.lost.plus';
 
@@ -268,20 +274,20 @@ describe('censor_image', () => {
     expect(result.content[1].text).toMatch(/Censored 2 region\(s\)/);
   });
 
-  it('censors a 1.5 MP JPEG at full size', async () => {
+  it('censors a 1.5 MP JPEG in place at full size', async () => {
     const image_b64 = await stripedJpeg(1500, 1000);
     const result = await callTool('censor_image', {
       image_b64, regions: [{ x: 0, y: 0, w: 750, h: 1000 }], strength: 32,
     });
     expect(result.isError).toBeUndefined();
-    expect(result.content[1].text).toMatch(/^Censored 1 region\(s\) on a 1500x1000 image; output JPEG/);
+    expect(result.content[1].text).toMatch(/^Censored 1 region\(s\) on a 1500x1000 JPEG in place at full resolution/);
     const { raster } = await decodeImage({ image_b64: result.content[0].data });
     expect([raster.width, raster.height]).toEqual([1500, 1000]);
     expect(rowContrast(raster, 500, 0, 700)).toBeLessThan(40);      // mosaicked: flat grey
     expect(rowContrast(raster, 500, 800, 1500)).toBeGreaterThan(150); // untouched: stripes
   });
 
-  it('decodes a 12 MP JPEG at 1/2, scales the regions, and says so', async () => {
+  it('converts a 12 MP JPEG to PNG through the pixel path: decoded at 1/2, regions scaled', async () => {
     const image_b64 = await stripedJpeg(4000, 3000);
     expect(4000 * 3000).toBeGreaterThan(MAX_PIXELS);
     const info = await callTool('get_image_info', { image_b64 });
@@ -289,11 +295,11 @@ describe('censor_image', () => {
 
     // Region in SOURCE pixels: the left half.
     const result = await callTool('censor_image', {
-      image_b64, regions: [{ x: 0, y: 0, w: 2000, h: 3000 }], strength: 32,
+      image_b64, regions: [{ x: 0, y: 0, w: 2000, h: 3000 }], strength: 32, output_format: 'png',
     });
     expect(result.isError).toBeUndefined();
     expect(result.content[1].text).toMatch(
-      /^Censored 1 region\(s\) on a 4000x3000 image decoded at 1\/2 \(output is 2000x1500\); output JPEG/,
+      /^Censored 1 region\(s\) on a 4000x3000 image decoded at 1\/2 \(output is 2000x1500\); output PNG/,
     );
     const { raster, scale } = await decodeImage({ image_b64: result.content[0].data });
     expect(scale).toBe(1);
@@ -301,6 +307,197 @@ describe('censor_image', () => {
     expect(rowContrast(raster, 750, 0, 950)).toBeLessThan(40);        // left half mosaicked
     expect(rowContrast(raster, 750, 1050, 2000)).toBeGreaterThan(100); // right half still striped
   }, 30_000);
+
+
+  // --- the DCT path: JPEG in, JPEG out --------------------------------------
+  describe('JPEG in place (DCT domain)', () => {
+    /**
+     * Pixels of `after` that differ from `before`, split into those inside
+     * `box` [x0, y0, x1, y1) and those outside it by more than `margin` px.
+     * The 1 px margin is the decoder's chroma upsampling, which blends a
+     * changed chroma block into the neighbouring pixel row/column; the
+     * coefficients there are untouched.
+     */
+    function changed(before, after, box, margin = 1) {
+      const w = before.width, h = before.height;
+      let inside = 0, outside = 0, boxPixels = 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const d = before.data[i] !== after.data[i] || before.data[i + 1] !== after.data[i + 1] || before.data[i + 2] !== after.data[i + 2];
+          const inBox = x >= box[0] && x < box[2] && y >= box[1] && y < box[3];
+          const near = x >= box[0] - margin && x < box[2] + margin && y >= box[1] - margin && y < box[3] + margin;
+          if (inBox) { boxPixels++; if (d) inside++; } else if (!near && d) outside++;
+        }
+      }
+      return { inside, outside, boxPixels };
+    }
+    async function roundTrip(image_b64, args) {
+      const result = await callTool('censor_image', { image_b64, ...args });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].mimeType).toBe('image/jpeg');
+      const { raster: before } = await decodeImage({ image_b64 });
+      const { raster: after } = await decodeImage({ image_b64: result.content[0].data });
+      expect([after.width, after.height]).toEqual([before.width, before.height]);
+      return { result, before, after, bytes: b64ToBytes(result.content[0].data) };
+    }
+    function sofMarker(bytes) {
+      let p = 2;
+      while (p + 4 <= bytes.length) {
+        const m = bytes[p + 1];
+        if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return m;
+        p += 2 + ((bytes[p + 2] << 8) | bytes[p + 3]);
+      }
+      return null;
+    }
+
+    it('leaves every pixel outside the snapped region bit-exact (4:2:0, region inside)', async () => {
+      const image_b64 = await stripedJpeg(640, 480);
+      const { before, after } = await roundTrip(image_b64, { regions: [{ x: 100, y: 100, w: 200, h: 120 }], strength: 16 });
+      // Requested [100,300)x[100,220) snaps outward to the 16 px MCU grid.
+      const c = changed(before, after, [96, 96, 304, 224]);
+      expect(c.outside).toBe(0);
+      expect(c.inside).toBeGreaterThan(c.boxPixels * 0.9);
+    });
+
+    it('snaps to 16 px for 4:2:0 and 8 px for 4:4:4', async () => {
+      for (const [fixture, grid] of [[GRAD420_JPG, 16], [GRAD444_JPG, 8]]) {
+        const { before, after } = await roundTrip(fixture, { regions: [{ x: 41, y: 21, w: 10, h: 10 }], strength: 4 });
+        const box = [Math.floor(41 / grid) * grid, Math.floor(21 / grid) * grid, Math.ceil(51 / grid) * grid, Math.ceil(31 / grid) * grid];
+        const c = changed(before, after, box);
+        expect(c.outside).toBe(0);
+        expect(c.inside).toBeGreaterThan(c.boxPixels * 0.8);
+        // Column 36 is inside the 16 px snap but outside the 8 px one.
+        const col36 = changed(before, after, [36, 0, 37, 48], 0).inside;
+        if (grid === 16) expect(col36).toBeGreaterThan(0); else expect(col36).toBe(0);
+      }
+    });
+
+    it('handles a region touching and crossing the image border', async () => {
+      const image_b64 = await stripedJpeg(300, 200);
+      const { before, after, result } = await roundTrip(image_b64, { regions: [{ x: -20, y: 150, w: 120, h: 100 }], strength: 8 });
+      expect(result.content[1].text).toMatch(/300x200 JPEG in place/);
+      const c = changed(before, after, [0, 144, 112, 200]);
+      expect(c.outside).toBe(0);
+      expect(c.inside).toBeGreaterThan(c.boxPixels * 0.9);
+    });
+
+    it('blurs in place too, with the same bit-exact outside', async () => {
+      const image_b64 = await stripedJpeg(400, 300);
+      const { before, after } = await roundTrip(image_b64, { regions: [{ x: 100, y: 100, w: 100, h: 80 }], effect: 'blur', strength: 6 });
+      const c = changed(before, after, [96, 96, 208, 192]);
+      expect(c.outside).toBe(0);
+      expect(c.inside).toBeGreaterThan(c.boxPixels * 0.9);
+      expect(rowContrast(after, 140, 112, 192)).toBeLessThan(60);   // blurred stripes
+      expect(rowContrast(after, 140, 250, 400)).toBeGreaterThan(150); // untouched
+    });
+
+    it('keeps an ellipse round: corner blocks of its box stay bit-exact', async () => {
+      const image_b64 = await stripedJpeg(320, 240);
+      const { before, after } = await roundTrip(image_b64, { regions: [{ x: 64, y: 64, w: 128, h: 96, shape: 'ellipse' }], strength: 64 });
+      expect(changed(before, after, [64, 64, 80, 80], 0).inside).toBe(0);   // top-left corner block, outside the ellipse
+      expect(changed(before, after, [120, 104, 136, 120], 0).inside).toBeGreaterThan(200); // centre
+      expect(changed(before, after, [64, 64, 192, 160]).outside).toBe(0);
+    });
+
+    it('accepts progressive input and writes baseline', async () => {
+      const { before, after, bytes } = await roundTrip(GRAD_PROG_JPG, { regions: [{ x: 16, y: 16, w: 16, h: 16 }], strength: 8 });
+      expect(sofMarker(b64ToBytes(GRAD_PROG_JPG))).toBe(0xc2);
+      expect(sofMarker(bytes)).toBe(0xc0);
+      expect(changed(before, after, [16, 16, 32, 32]).outside).toBe(0);
+    });
+
+    it('censors a 12 MP JPEG at full output resolution', async () => {
+      const image_b64 = await stripedJpeg(4000, 3000);
+      const result = await callTool('censor_image', {
+        image_b64, regions: [{ x: 0, y: 0, w: 2000, h: 3000 }], strength: 32,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[1].text).toMatch(/^Censored 1 region\(s\) on a 4000x3000 JPEG in place at full resolution/);
+      const { raster } = await decodeImage({ image_b64: result.content[0].data });
+      expect([raster.width, raster.height]).toEqual([2000, 1500]); // decodeImage itself still works at 1/2
+      expect(rowContrast(raster, 750, 0, 950)).toBeLessThan(40);
+      expect(rowContrast(raster, 750, 1050, 2000)).toBeGreaterThan(100);
+    }, 30_000);
+
+    it('rejects arithmetic-coded input with a readable error', async () => {
+      const bytes = b64ToBytes(GRAD420_JPG);
+      let p = 2;
+      while (bytes[p + 1] !== 0xc0) p += 2 + ((bytes[p + 2] << 8) | bytes[p + 3]);
+      bytes[p + 1] = 0xc9; // SOF9: arithmetic sequential
+      const result = await callTool('censor_image', { image_b64: bytes.toBase64(), regions: [{ x: 0, y: 0, w: 16, h: 16 }] });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(/arithmetic-coded JPEG is not supported/);
+    });
+
+    it('maps regions through EXIF orientation like the pixel path and keeps the flag', async () => {
+      // The red square shows at x 40..59, y 70..89 in the 64x96 the caller sees.
+      const info = await callTool('get_image_info', { image_b64: EXIF6_MARK_JPG });
+      expect(info.structuredContent).toEqual({ width: 64, height: 96, format: 'JPEG' });
+      const region = { x: 40, y: 70, w: 20, h: 20 };
+      const { before, after, bytes } = await roundTrip(EXIF6_MARK_JPG, { regions: [region], strength: 64 });
+      expect([after.width, after.height]).toEqual([64, 96]);
+      expect(readExifOrientation(bytes)).toBe(6);
+      const out = await callTool('get_image_info', { image_b64: bytes.toBase64() });
+      expect(out.structuredContent).toEqual({ width: 64, height: 96, format: 'JPEG' });
+      // The pure-red square is replaced by its cell's average in the DCT
+      // output (green rises from ~0)...
+      expect(pixel(before, 50, 80)[1]).toBeLessThan(20);
+      expect(pixel(after, 50, 80)[1]).toBeGreaterThan(80);
+      // ...the same average the pixel path produces: both outputs agree within
+      // JPEG noise over the requested rect, and nothing changed far from it.
+      const { raster: ref } = await decodeImage({ image_b64: EXIF6_MARK_JPG });
+      censor(ref, [{ ...region, effect: 'mosaic', strength: 64 }]);
+      let maxDiff = 0;
+      for (let y = 70; y < 90; y++) for (let x = 40; x < 60; x++) {
+        const a = pixel(after, x, y), b = pixel(ref, x, y);
+        maxDiff = Math.max(maxDiff, Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
+      }
+      // (The pixel path's cell colour is a triangle-weighted mean, the DCT
+      // path's a plain mean; a saturated red square near the cell centre is
+      // where they differ most.)
+      expect(maxDiff).toBeLessThan(48);
+      // Placement: everything that changed lies within one 16 px MCU of the
+      // requested rect, in the caller's frame.
+      const bbox = [64, 96, 0, 0];
+      for (let y = 0; y < 96; y++) for (let x = 0; x < 64; x++) {
+        if (pixel(before, x, y).some((v, i) => v !== pixel(after, x, y)[i])) {
+          bbox[0] = Math.min(bbox[0], x); bbox[1] = Math.min(bbox[1], y); bbox[2] = Math.max(bbox[2], x + 1); bbox[3] = Math.max(bbox[3], y + 1);
+        }
+      }
+      expect(bbox[0]).toBeLessThanOrEqual(40); expect(bbox[0]).toBeGreaterThanOrEqual(40 - 17);
+      expect(bbox[1]).toBeLessThanOrEqual(70); expect(bbox[1]).toBeGreaterThanOrEqual(70 - 17);
+      expect(bbox[2]).toBeGreaterThanOrEqual(60); expect(bbox[2]).toBeLessThanOrEqual(60 + 17);
+      expect(bbox[3]).toBeGreaterThanOrEqual(90); expect(bbox[3]).toBeLessThanOrEqual(90 + 17);
+    });
+
+    it('toStoredBox inverts applyExifOrientation for all eight orientations', () => {
+      const w = 5, h = 3;
+      for (let o = 1; o <= 8; o++) {
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const src = new Raster(w, h);
+            src.data[(y * w + x) * 4] = 255;
+            const shown = applyExifOrientation(src, o);
+            let nx = -1, ny = -1;
+            for (let i = 0; i < shown.width * shown.height; i++) if (shown.data[i * 4] === 255) { nx = i % shown.width; ny = Math.floor(i / shown.width); }
+            expect(toStoredBox(o, w, h, [nx, ny, nx + 1, ny + 1])).toEqual([x, y, x + 1, y + 1]);
+          }
+        }
+      }
+    });
+
+    it('routes JPEGs above the coefficient budget to the pixel path', () => {
+      const c420 = [{ h: 2, v: 2 }, { h: 1, v: 1 }, { h: 1, v: 1 }];
+      const c444 = [{ h: 1, v: 1 }, { h: 1, v: 1 }, { h: 1, v: 1 }];
+      expect(jpegFitsDctPath({ width: 6000, height: 4000, components: c420 })).toBe(true);   // 24 MP, 72 MB
+      expect(jpegFitsDctPath({ width: 7000, height: 4000, components: c420 })).toBe(false);  // 28 MP, 84 MB
+      expect(jpegFitsDctPath({ width: 4000, height: 3000, components: c444 })).toBe(true);   // 12 MP, 72 MB
+      expect(jpegFitsDctPath({ width: 4600, height: 3450, components: c444 })).toBe(false);  // 16 MP, 95 MB
+      expect(headerDimensions(b64ToBytes(GRAD420_JPG), 'JPEG').components).toEqual(c420);
+      expect(headerDimensions(b64ToBytes(GRAD444_JPG), 'JPEG').components).toEqual(c444);
+    });
+  });
 
   it('works over the 2026-07-28 envelope too', async () => {
     const result = await callTool('censor_image', {
