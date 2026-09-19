@@ -131,7 +131,7 @@ export async function decodeImage(args) {
     // Header lied (or a codec quirk); never let an oversized raster proceed.
     throw new CensorError(`image exceeds ${MAX_PIXELS / 1_000_000} megapixels`);
   }
-  // The mozjpeg WASM decoder ignores EXIF orientation; normalize exactly
+  // The libjpeg-turbo WASM decoder ignores EXIF orientation; normalize exactly
   // like Pillow's exif_transpose so region coordinates address the pixels
   // the caller sees.
   const orientation = format === 'JPEG' ? readExifOrientation(bytes) : 1;
@@ -181,7 +181,7 @@ export async function encodeImage(raster, format) {
   return format === 'JPEG' ? encodeJpeg(raster) : encodePng(raster);
 }
 
-// The mozjpeg WASM decoder does not apply EXIF orientation; normalize the
+// The libjpeg-turbo WASM decoder does not apply EXIF orientation; normalize the
 // raster exactly like Pillow's exif_transpose so region coordinates
 // address the pixels the caller sees.
 const EXIF_ORIENT_TAG = 0x0112;
@@ -260,8 +260,13 @@ function parseTiffOrientation(bytes, start, len) {
   return 1;
 }
 
+// Margin around a region so the layer's pixels inside the region come out
+// exactly as they would from a whole-image pass. Mosaic: the bilinear
+// downscale's triangle kernel reaches one cell past each cell, so cells that
+// touch the region need one full neighbour cell on every side; two cells is
+// that plus grid rounding. Blur: the three-box Gaussian's total support.
 function padFor(effect, strength) {
-  if (effect === 'mosaic') return 5 * Math.max(MOSAIC_MIN, Math.round(strength)) + 16;
+  if (effect === 'mosaic') return 2 * Math.max(MOSAIC_MIN, Math.round(strength));
   return 4 * strength + 16;
 }
 

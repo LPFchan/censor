@@ -23,30 +23,39 @@ export class Raster {
     }
     return out;
   }
+  // Runs of fully opaque mask (or no mask at all) are copied row-wise with
+  // TypedArray.set; only soft edges go through the per-pixel blend.
   paste(layer, dx, dy, mask) {
     const w = layer.width, h = layer.height;
     const dst = this.data, src = layer.data, dw = this.width, dh = this.height;
+    const c0 = Math.max(0, -dx), c1 = Math.min(w, dw - dx);
+    if (c1 <= c0) return;
     for (let row = 0; row < h; row++) {
       const oy = dy + row;
       if (oy < 0 || oy >= dh) continue;
-      for (let col = 0; col < w; col++) {
-        const ox = dx + col;
-        if (ox < 0 || ox >= dw) continue;
-        const m = mask ? mask[row * w + col] : 255;
-        if (m === 0) continue;
-        const si = (row * w + col) * 4;
-        const di = (oy * dw + ox) * 4;
+      const srow = row * w, drow = oy * dw + dx;
+      if (!mask) {
+        dst.set(src.subarray((srow + c0) * 4, (srow + c1) * 4), (drow + c0) * 4);
+        continue;
+      }
+      let col = c0;
+      while (col < c1) {
+        const m = mask[srow + col];
         if (m === 255) {
-          dst[di] = src[si];
-          dst[di + 1] = src[si + 1];
-          dst[di + 2] = src[si + 2];
-          dst[di + 3] = src[si + 3];
+          let end = col + 1;
+          while (end < c1 && mask[srow + end] === 255) end++;
+          dst.set(src.subarray((srow + col) * 4, (srow + end) * 4), (drow + col) * 4);
+          col = end;
+        } else if (m === 0) {
+          col++;
         } else {
+          const si = (srow + col) * 4, di = (drow + col) * 4;
           const a = m / 255, b = 1 - a;
           dst[di] = src[si] * a + dst[di] * b;
           dst[di + 1] = src[si + 1] * a + dst[di + 1] * b;
           dst[di + 2] = src[si + 2] * a + dst[di + 2] * b;
           dst[di + 3] = src[si + 3] * a + dst[di + 3] * b;
+          col++;
         }
       }
     }
