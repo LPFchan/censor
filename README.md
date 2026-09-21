@@ -90,9 +90,9 @@ server; the app has no build step.
 ## deploy
 
 One Cloudflare Worker, `censor` (`wrangler.toml`), deployed with
-`npm run deploy`, which fetches the deploy token from passage (`infra` /
-`CF_MASTER_TOKEN`, via the `passage` setup module) and runs `wrangler
-deploy`; nothing to export by hand. The static PWA is served from the Worker's asset store
+`npm run deploy`, which runs `wrangler deploy` and needs
+`CLOUDFLARE_API_TOKEN` in the environment (passage `infra` /
+`CF_MASTER_TOKEN`, exported from `~/.zshenv` on the deploy host). The static PWA is served from the Worker's asset store
 (`public/`); `/mcp`, `/healthz` and the MCP server card are handled by the
 script (`worker/`). Image decode/encode runs on bundled WASM codecs (UPNG.js
 for PNG, libjpeg-turbo for JPEG); the effects are plain typed-array math. The
