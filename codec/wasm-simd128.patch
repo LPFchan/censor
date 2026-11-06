@@ -1,4 +1,4 @@
-From eca048bdeb8242284f75f2c30ff0a4e2fc2f3ba5 Mon Sep 17 00:00:00 2001
+From e4fc60619abb3a45af4872518aaa9b391a589212 Mon Sep 17 00:00:00 2001
 From: Jeroen Bobbeldijk <jeroen.bobbeldijk@doxis.com>
 Date: Tue, 25 Aug 2026 08:38:32 +0200
 Subject: [PATCH 1/5] simd: add a WebAssembly SIMD128 kernel set
@@ -59,7 +59,7 @@ WASM_SIMD_DEFAULT, so a build can isolate one kernel without source edits.
  create mode 100644 simd/wasm/jsimdcpu.c
 
 diff --git a/simd/CMakeLists.txt b/simd/CMakeLists.txt
-index 48f215d..9abfbf5 100644
+index 8487a2e..784611e 100644
 --- a/simd/CMakeLists.txt
 +++ b/simd/CMakeLists.txt
 @@ -13,12 +13,79 @@ endmacro()
@@ -169,7 +169,7 @@ index 48f215d..9abfbf5 100644
    include(CheckSymbolExists)
    check_symbol_exists(getauxval sys/auxv.h HAVE_GETAUXVAL)
 diff --git a/simd/jsimd.c b/simd/jsimd.c
-index 693d0a8..f1eaf4f 100644
+index 2a7c190..d3bb305 100644
 --- a/simd/jsimd.c
 +++ b/simd/jsimd.c
 @@ -68,6 +68,10 @@ init_simd(j_common_ptr cinfo)
@@ -183,7 +183,7 @@ index 693d0a8..f1eaf4f 100644
  
  #ifndef NO_GETENV
    /* Force different settings through environment variables */
-@@ -122,6 +126,12 @@ jsimd_set_rgb_ycc(j_compress_ptr cinfo)
+@@ -127,6 +131,12 @@ jsimd_set_rgb_ycc(j_compress_ptr cinfo)
    if (!cinfo->cconvert)
      return JSIMD_NONE;
  
@@ -196,7 +196,7 @@ index 693d0a8..f1eaf4f 100644
  #if SIMD_ARCHITECTURE == X86_64 || SIMD_ARCHITECTURE == I386
    if ((cinfo->master->simd_support & JSIMD_AVX2) &&
        IS_ALIGNED_AVX(jconst_rgb_ycc_convert_avx2)) {
-@@ -139,7 +149,8 @@ jsimd_set_rgb_ycc(j_compress_ptr cinfo)
+@@ -144,7 +154,8 @@ jsimd_set_rgb_ycc(j_compress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -206,7 +206,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      SET_SIMD_EXTRGB_COLOR_CONVERTER(ycc, neon);
      return JSIMD_NEON;
-@@ -196,7 +207,8 @@ jsimd_set_rgb_gray(j_compress_ptr cinfo)
+@@ -201,7 +212,8 @@ jsimd_set_rgb_gray(j_compress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -216,7 +216,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      SET_SIMD_EXTRGB_COLOR_CONVERTER(gray, neon);
      return JSIMD_NEON;
-@@ -245,6 +257,12 @@ jsimd_set_ycc_rgb(j_decompress_ptr cinfo)
+@@ -250,6 +262,12 @@ jsimd_set_ycc_rgb(j_decompress_ptr cinfo)
    if (!cinfo->cconvert)
      return JSIMD_NONE;
  
@@ -229,7 +229,7 @@ index 693d0a8..f1eaf4f 100644
  #if SIMD_ARCHITECTURE == X86_64 || SIMD_ARCHITECTURE == I386
    if ((cinfo->master->simd_support & JSIMD_AVX2) &&
        IS_ALIGNED_AVX(jconst_ycc_rgb_convert_avx2)) {
-@@ -262,7 +280,8 @@ jsimd_set_ycc_rgb(j_decompress_ptr cinfo)
+@@ -267,7 +285,8 @@ jsimd_set_ycc_rgb(j_decompress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -239,7 +239,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      SET_SIMD_EXTRGB_COLOR_DECONVERTER(neon);
      return JSIMD_NEON;
-@@ -291,7 +310,8 @@ jsimd_set_ycc_rgb(j_decompress_ptr cinfo)
+@@ -296,7 +315,8 @@ jsimd_set_ycc_rgb(j_decompress_ptr cinfo)
  HIDDEN unsigned int
  jsimd_set_ycc_rgb565(j_decompress_ptr cinfo)
  {
@@ -249,7 +249,7 @@ index 693d0a8..f1eaf4f 100644
    init_simd((j_common_ptr)cinfo);
  
    if (BITS_IN_JSAMPLE != 8)
-@@ -333,6 +353,12 @@ jsimd_set_h2v1_downsample(j_compress_ptr cinfo)
+@@ -338,6 +358,12 @@ jsimd_set_h2v1_downsample(j_compress_ptr cinfo)
    if (!cinfo->downsample)
      return JSIMD_NONE;
  
@@ -262,7 +262,7 @@ index 693d0a8..f1eaf4f 100644
  #if SIMD_ARCHITECTURE == X86_64 || SIMD_ARCHITECTURE == I386
    if (cinfo->master->simd_support & JSIMD_AVX2) {
      cinfo->downsample->h2v1_downsample_simd = jsimd_h2v1_downsample_avx2;
-@@ -348,7 +374,8 @@ jsimd_set_h2v1_downsample(j_compress_ptr cinfo)
+@@ -353,7 +379,8 @@ jsimd_set_h2v1_downsample(j_compress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -272,7 +272,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      cinfo->downsample->h2v1_downsample_simd = jsimd_h2v1_downsample_neon;
      return JSIMD_NEON;
-@@ -393,6 +420,12 @@ jsimd_set_h2v2_downsample(j_compress_ptr cinfo)
+@@ -398,6 +425,12 @@ jsimd_set_h2v2_downsample(j_compress_ptr cinfo)
    if (!cinfo->downsample)
      return JSIMD_NONE;
  
@@ -285,7 +285,7 @@ index 693d0a8..f1eaf4f 100644
  #if SIMD_ARCHITECTURE == X86_64 || SIMD_ARCHITECTURE == I386
    if (cinfo->master->simd_support & JSIMD_AVX2) {
      cinfo->downsample->h2v2_downsample_simd = jsimd_h2v2_downsample_avx2;
-@@ -408,7 +441,8 @@ jsimd_set_h2v2_downsample(j_compress_ptr cinfo)
+@@ -413,7 +446,8 @@ jsimd_set_h2v2_downsample(j_compress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -295,7 +295,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      cinfo->downsample->h2v2_downsample_simd = jsimd_h2v2_downsample_neon;
      return JSIMD_NEON;
-@@ -473,7 +507,8 @@ jsimd_set_h2v1_upsample(j_decompress_ptr cinfo)
+@@ -478,7 +512,8 @@ jsimd_set_h2v1_upsample(j_decompress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -305,7 +305,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      cinfo->upsample->h2v1_upsample_simd = jsimd_h2v1_upsample_neon;
      return JSIMD_NEON;
-@@ -531,7 +566,8 @@ jsimd_set_h2v2_upsample(j_decompress_ptr cinfo)
+@@ -536,7 +571,8 @@ jsimd_set_h2v2_upsample(j_decompress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -315,7 +315,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      cinfo->upsample->h2v2_upsample_simd = jsimd_h2v2_upsample_neon;
      return JSIMD_NEON;
-@@ -574,6 +610,12 @@ jsimd_set_h2v1_fancy_upsample(j_decompress_ptr cinfo)
+@@ -579,6 +615,12 @@ jsimd_set_h2v1_fancy_upsample(j_decompress_ptr cinfo)
    if (!cinfo->upsample)
      return JSIMD_NONE;
  
@@ -328,7 +328,7 @@ index 693d0a8..f1eaf4f 100644
  #if SIMD_ARCHITECTURE == X86_64 || SIMD_ARCHITECTURE == I386
    if ((cinfo->master->simd_support & JSIMD_AVX2) &&
        IS_ALIGNED_AVX(jconst_fancy_upsample_avx2)) {
-@@ -591,7 +633,8 @@ jsimd_set_h2v1_fancy_upsample(j_decompress_ptr cinfo)
+@@ -596,7 +638,8 @@ jsimd_set_h2v1_fancy_upsample(j_decompress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -338,7 +338,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      cinfo->upsample->h2v1_upsample_simd = jsimd_h2v1_fancy_upsample_neon;
      return JSIMD_NEON;
-@@ -639,6 +682,12 @@ jsimd_set_h2v2_fancy_upsample(j_decompress_ptr cinfo)
+@@ -644,6 +687,12 @@ jsimd_set_h2v2_fancy_upsample(j_decompress_ptr cinfo)
    if (!cinfo->upsample)
      return JSIMD_NONE;
  
@@ -351,7 +351,7 @@ index 693d0a8..f1eaf4f 100644
  #if SIMD_ARCHITECTURE == X86_64 || SIMD_ARCHITECTURE == I386
    if ((cinfo->master->simd_support & JSIMD_AVX2) &&
        IS_ALIGNED_AVX(jconst_fancy_upsample_avx2)) {
-@@ -656,7 +705,8 @@ jsimd_set_h2v2_fancy_upsample(j_decompress_ptr cinfo)
+@@ -661,7 +710,8 @@ jsimd_set_h2v2_fancy_upsample(j_decompress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -361,7 +361,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      cinfo->upsample->h2v2_upsample_simd = jsimd_h2v2_fancy_upsample_neon;
      return JSIMD_NEON;
-@@ -692,7 +742,8 @@ jsimd_h2v2_fancy_upsample(j_decompress_ptr cinfo, jpeg_component_info *compptr,
+@@ -697,7 +747,8 @@ jsimd_h2v2_fancy_upsample(j_decompress_ptr cinfo, jpeg_component_info *compptr,
  }
  
  
@@ -371,7 +371,7 @@ index 693d0a8..f1eaf4f 100644
  
  HIDDEN unsigned int
  jsimd_set_h1v2_fancy_upsample(j_decompress_ptr cinfo)
-@@ -756,7 +807,8 @@ jsimd_set_h2v1_merged_upsample(j_decompress_ptr cinfo)
+@@ -761,7 +812,8 @@ jsimd_set_h2v1_merged_upsample(j_decompress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -381,7 +381,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      SET_SIMD_EXTRGB_MERGED_UPSAMPLER(h2v1, neon);
      return JSIMD_NEON;
-@@ -820,7 +872,8 @@ jsimd_set_h2v2_merged_upsample(j_decompress_ptr cinfo)
+@@ -825,7 +877,8 @@ jsimd_set_h2v2_merged_upsample(j_decompress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -391,7 +391,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      SET_SIMD_EXTRGB_MERGED_UPSAMPLER(h2v2, neon);
      return JSIMD_NEON;
-@@ -867,6 +920,12 @@ jsimd_set_convsamp(j_compress_ptr cinfo, convsamp_method_ptr *method)
+@@ -872,6 +925,12 @@ jsimd_set_convsamp(j_compress_ptr cinfo, convsamp_method_ptr *method)
    if (sizeof(DCTELEM) != 2)
      return JSIMD_NONE;
  
@@ -404,7 +404,7 @@ index 693d0a8..f1eaf4f 100644
  #if SIMD_ARCHITECTURE == X86_64 || SIMD_ARCHITECTURE == I386
    if (cinfo->master->simd_support & JSIMD_AVX2) {
      *method = jsimd_convsamp_avx2;
-@@ -882,7 +941,8 @@ jsimd_set_convsamp(j_compress_ptr cinfo, convsamp_method_ptr *method)
+@@ -887,7 +946,8 @@ jsimd_set_convsamp(j_compress_ptr cinfo, convsamp_method_ptr *method)
      return JSIMD_MMX;
    }
  #endif
@@ -414,7 +414,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      *method = jsimd_convsamp_neon;
      return JSIMD_NEON;
-@@ -945,6 +1005,12 @@ jsimd_set_fdct_islow(j_compress_ptr cinfo, forward_DCT_method_ptr *method)
+@@ -950,6 +1010,12 @@ jsimd_set_fdct_islow(j_compress_ptr cinfo, forward_DCT_method_ptr *method)
    if (sizeof(DCTELEM) != 2)
      return JSIMD_NONE;
  
@@ -427,7 +427,7 @@ index 693d0a8..f1eaf4f 100644
  #if SIMD_ARCHITECTURE == X86_64 || SIMD_ARCHITECTURE == I386
    if ((cinfo->master->simd_support & JSIMD_AVX2) &&
        IS_ALIGNED_AVX(jconst_fdct_islow_avx2)) {
-@@ -962,7 +1028,8 @@ jsimd_set_fdct_islow(j_compress_ptr cinfo, forward_DCT_method_ptr *method)
+@@ -967,7 +1033,8 @@ jsimd_set_fdct_islow(j_compress_ptr cinfo, forward_DCT_method_ptr *method)
      return JSIMD_MMX;
    }
  #endif
@@ -437,7 +437,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      *method = jsimd_fdct_islow_neon;
      return JSIMD_NEON;
-@@ -1008,7 +1075,8 @@ jsimd_set_fdct_ifast(j_compress_ptr cinfo, forward_DCT_method_ptr *method)
+@@ -1013,7 +1080,8 @@ jsimd_set_fdct_ifast(j_compress_ptr cinfo, forward_DCT_method_ptr *method)
      return JSIMD_MMX;
    }
  #endif
@@ -447,7 +447,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      *method = jsimd_fdct_ifast_neon;
      return JSIMD_NEON;
-@@ -1070,6 +1138,12 @@ jsimd_set_quantize(j_compress_ptr cinfo, quantize_method_ptr *method)
+@@ -1075,6 +1143,12 @@ jsimd_set_quantize(j_compress_ptr cinfo, quantize_method_ptr *method)
    if (sizeof(DCTELEM) != 2)
      return JSIMD_NONE;
  
@@ -460,7 +460,7 @@ index 693d0a8..f1eaf4f 100644
  #if SIMD_ARCHITECTURE == X86_64 || SIMD_ARCHITECTURE == I386
    if (cinfo->master->simd_support & JSIMD_AVX2) {
      *method = jsimd_quantize_avx2;
-@@ -1085,7 +1159,8 @@ jsimd_set_quantize(j_compress_ptr cinfo, quantize_method_ptr *method)
+@@ -1090,7 +1164,8 @@ jsimd_set_quantize(j_compress_ptr cinfo, quantize_method_ptr *method)
      return JSIMD_MMX;
    }
  #endif
@@ -470,7 +470,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      *method = jsimd_quantize_neon;
      return JSIMD_NEON;
-@@ -1159,6 +1234,12 @@ jsimd_set_idct_islow(j_decompress_ptr cinfo)
+@@ -1164,6 +1239,12 @@ jsimd_set_idct_islow(j_decompress_ptr cinfo)
    if (!cinfo->idct)
      return JSIMD_NONE;
  
@@ -483,7 +483,7 @@ index 693d0a8..f1eaf4f 100644
  #if SIMD_ARCHITECTURE == X86_64 || SIMD_ARCHITECTURE == I386
    if ((cinfo->master->simd_support & JSIMD_AVX2) &&
        IS_ALIGNED_AVX(jconst_idct_islow_avx2)) {
-@@ -1176,7 +1257,8 @@ jsimd_set_idct_islow(j_decompress_ptr cinfo)
+@@ -1181,7 +1262,8 @@ jsimd_set_idct_islow(j_decompress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -493,7 +493,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      cinfo->idct->idct_simd = jsimd_idct_islow_neon;
      return JSIMD_NEON;
-@@ -1242,7 +1324,8 @@ jsimd_set_idct_ifast(j_decompress_ptr cinfo)
+@@ -1247,7 +1329,8 @@ jsimd_set_idct_ifast(j_decompress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -503,7 +503,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      cinfo->idct->idct_simd = jsimd_idct_ifast_neon;
      return JSIMD_NEON;
-@@ -1357,7 +1440,8 @@ jsimd_set_idct_2x2(j_decompress_ptr cinfo)
+@@ -1362,7 +1445,8 @@ jsimd_set_idct_2x2(j_decompress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -513,7 +513,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      cinfo->idct->idct_2x2_simd = jsimd_idct_2x2_neon;
      return JSIMD_NEON;
-@@ -1406,7 +1490,8 @@ jsimd_set_idct_4x4(j_decompress_ptr cinfo)
+@@ -1411,7 +1495,8 @@ jsimd_set_idct_4x4(j_decompress_ptr cinfo)
      return JSIMD_MMX;
    }
  #endif
@@ -523,7 +523,7 @@ index 693d0a8..f1eaf4f 100644
    if (cinfo->master->simd_support & JSIMD_NEON) {
      cinfo->idct->idct_4x4_simd = jsimd_idct_4x4_neon;
      return JSIMD_NEON;
-@@ -1437,6 +1522,14 @@ jsimd_set_huff_encode_one_block(j_compress_ptr cinfo)
+@@ -1442,6 +1527,14 @@ jsimd_set_huff_encode_one_block(j_compress_ptr cinfo)
    if (!cinfo->entropy)
      return JSIMD_NONE;
  
@@ -538,7 +538,7 @@ index 693d0a8..f1eaf4f 100644
  #if SIMD_ARCHITECTURE == X86_64 || SIMD_ARCHITECTURE == I386
    if ((cinfo->master->simd_support & JSIMD_SSE2) &&
        cinfo->master->simd_huffman &&
-@@ -1467,13 +1560,21 @@ jsimd_set_encode_mcu_AC_first_prepare(j_compress_ptr cinfo,
+@@ -1472,13 +1565,21 @@ jsimd_set_encode_mcu_AC_first_prepare(j_compress_ptr cinfo,
    if (sizeof(JCOEF) != 2)
      return JSIMD_NONE;
  
@@ -561,7 +561,7 @@ index 693d0a8..f1eaf4f 100644
    if ((cinfo->master->simd_support & JSIMD_NEON) &&
        cinfo->master->simd_huffman) {
      *method = jsimd_encode_mcu_AC_first_prepare_neon;
-@@ -1494,13 +1595,21 @@ jsimd_set_encode_mcu_AC_refine_prepare(j_compress_ptr cinfo,
+@@ -1499,13 +1600,21 @@ jsimd_set_encode_mcu_AC_refine_prepare(j_compress_ptr cinfo,
    if (sizeof(JCOEF) != 2)
      return JSIMD_NONE;
  
@@ -3443,7 +3443,7 @@ index 0000000..0aa0624
 2.43.0
 
 
-From 13b23b1c2c7178d612b2169fdf9d70f6b2b9c61b Mon Sep 17 00:00:00 2001
+From d5a0ed2ac3592f272160ab3c3e3d976d14412ccb Mon Sep 17 00:00:00 2001
 From: Jeroen Bobbeldijk <jeroen.bobbeldijk@doxis.com>
 Date: Tue, 25 Aug 2026 08:38:48 +0200
 Subject: [PATCH 2/5] simd/arm: do not tie the Huffman SIMD bit buffer to the
@@ -3482,7 +3482,7 @@ separate from this change.
  5 files changed, 33 insertions(+), 6 deletions(-)
 
 diff --git a/simd/CMakeLists.txt b/simd/CMakeLists.txt
-index 9abfbf5..1a4fb7d 100644
+index 784611e..a8705cf 100644
 --- a/simd/CMakeLists.txt
 +++ b/simd/CMakeLists.txt
 @@ -417,8 +417,19 @@ endif() # WITH_SIMDE
@@ -3575,7 +3575,7 @@ index a1ee759..fa44d78 100644
  #else
  typedef bit_buf_type simd_bit_buf_type;
 diff --git a/src/jconfigint.h.in b/src/jconfigint.h.in
-index 6b7f13c..c13aeb3 100644
+index eaae05d..f70ca90 100644
 --- a/src/jconfigint.h.in
 +++ b/src/jconfigint.h.in
 @@ -75,6 +75,10 @@
@@ -3586,14 +3586,14 @@ index 6b7f13c..c13aeb3 100644
 +   platform (wasm32), where 64-bit integer operations are native. */
 +#cmakedefine WASM_NEON_HUFF64 1
 +
- #endif
+ #cmakedefine WITH_SIMDE 0
  
- #cmakedefine WITH_PROFILE
+ #endif
 -- 
 2.43.0
 
 
-From c84952253e4174860f64c4569dbf1c7c3ae9bcd8 Mon Sep 17 00:00:00 2001
+From 7748423ee17e85d53220465e032832a0cdd24a51 Mon Sep 17 00:00:00 2001
 From: Jeroen Bobbeldijk <jeroen.bobbeldijk@doxis.com>
 Date: Tue, 25 Aug 2026 08:39:05 +0200
 Subject: [PATCH 3/5] simd: let h1v2_fancy_upsample dispatch when the Neon gap
@@ -3625,7 +3625,7 @@ Coverage for the wasm plus SIMDe configuration goes from 27 to 28 hooks.
  6 files changed, 16 insertions(+), 4 deletions(-)
 
 diff --git a/simd/CMakeLists.txt b/simd/CMakeLists.txt
-index 1a4fb7d..e375c1c 100644
+index a8705cf..1d46eb3 100644
 --- a/simd/CMakeLists.txt
 +++ b/simd/CMakeLists.txt
 @@ -78,6 +78,10 @@ if(WITH_SIMDE)
@@ -3640,10 +3640,10 @@ index 1a4fb7d..e375c1c 100644
  
  add_library(simd OBJECT ${SIMD_SOURCES} wasm/jsimdcpu.c jsimd.c)
 diff --git a/simd/jsimd.c b/simd/jsimd.c
-index f1eaf4f..73cf468 100644
+index d3bb305..c6a30dd 100644
 --- a/simd/jsimd.c
 +++ b/simd/jsimd.c
-@@ -743,7 +743,7 @@ jsimd_h2v2_fancy_upsample(j_decompress_ptr cinfo, jpeg_component_info *compptr,
+@@ -748,7 +748,7 @@ jsimd_h2v2_fancy_upsample(j_decompress_ptr cinfo, jpeg_component_info *compptr,
  
  
  #if SIMD_ARCHITECTURE == ARM64 || SIMD_ARCHITECTURE == ARM || \
@@ -3681,7 +3681,7 @@ index 7c38ab3..db0551d 100644
  #endif
    D_COVERAGE_TEST(jsimd_set_h2v1_merged_upsample);
 diff --git a/src/jconfigint.h.in b/src/jconfigint.h.in
-index c13aeb3..28008c3 100644
+index f70ca90..5de1199 100644
 --- a/src/jconfigint.h.in
 +++ b/src/jconfigint.h.in
 @@ -75,6 +75,10 @@
@@ -3714,7 +3714,7 @@ index 8c8f877..a6ec15d 100644
 2.43.0
 
 
-From eb94876961d5bf5994724bda2cb9c7c71cbe0c84 Mon Sep 17 00:00:00 2001
+From c4877efa4f783505398797357f181329c409c4ae Mon Sep 17 00:00:00 2001
 From: Jeroen Bobbeldijk <jeroen.bobbeldijk@doxis.com>
 Date: Tue, 25 Aug 2026 08:39:05 +0200
 Subject: [PATCH 4/5] build: pick a sane FLOATTEST default for WebAssembly
@@ -3737,10 +3737,10 @@ on "can't open" against emscripten's virtual filesystem.)
  1 file changed, 9 insertions(+), 2 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index a1293db..28e44d0 100644
+index a6637f9..cf9fe16 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1087,7 +1087,12 @@ endif()
+@@ -1101,7 +1101,12 @@ endif()
  #        with a 32-bit version of Visual C++ and /arch:IA32 (which was the
  #        default in Visual C++ 2010 and earlier)
  
@@ -3754,7 +3754,7 @@ index a1293db..28e44d0 100644
    if(WITH_SIMD)
      set(DEFAULT_FLOATTEST8 sse)
    elseif(CPU_TYPE STREQUAL "x86_64")
-@@ -1139,7 +1144,9 @@ if(FLOATTEST8)
+@@ -1153,7 +1158,9 @@ if(FLOATTEST8)
    endif()
  endif()
  
@@ -3769,7 +3769,7 @@ index a1293db..28e44d0 100644
 2.43.0
 
 
-From 696e2a173eb695abe83bc7a10ee521c2832454db Mon Sep 17 00:00:00 2001
+From 8639aab2aabe3ab66cb0d390aa324714a4061d4e Mon Sep 17 00:00:00 2001
 From: Jeroen Bobbeldijk <jeroen.bobbeldijk@doxis.com>
 Date: Tue, 25 Aug 2026 08:39:21 +0200
 Subject: [PATCH 5/5] simd: add per kernel switches for measurement
@@ -3795,7 +3795,7 @@ they would silently do nothing for every other configuration.
  3 files changed, 28 insertions(+)
 
 diff --git a/simd/CMakeLists.txt b/simd/CMakeLists.txt
-index e375c1c..e5fc51c 100644
+index 1d46eb3..b6936b4 100644
 --- a/simd/CMakeLists.txt
 +++ b/simd/CMakeLists.txt
 @@ -17,6 +17,24 @@ option(WITH_WASM_SIMD "Build the hand-written WebAssembly SIMD128 kernels.  They
@@ -3824,10 +3824,10 @@ index e375c1c..e5fc51c 100644
  # x86[-64] (NASM)
  ###############################################################################
 diff --git a/simd/jsimd.c b/simd/jsimd.c
-index 73cf468..fba14c1 100644
+index c6a30dd..58a36ef 100644
 --- a/simd/jsimd.c
 +++ b/simd/jsimd.c
-@@ -1539,12 +1539,14 @@ jsimd_set_huff_encode_one_block(j_compress_ptr cinfo)
+@@ -1544,12 +1544,14 @@ jsimd_set_huff_encode_one_block(j_compress_ptr cinfo)
      return JSIMD_SSE2;
    }
  #elif SIMD_ARCHITECTURE == ARM64 || SIMD_ARCHITECTURE == ARM
