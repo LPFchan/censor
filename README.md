@@ -101,7 +101,7 @@ when its response is returned.
 
 **JPEG codec.** `worker/lib/jpeg_{dec,enc,censor}.{js,wasm}` are built from
 `codec/dec.cpp`, `codec/enc.cpp` and `codec/censor.cpp` by `codec/build.sh`
-(docker + `emscripten/emsdk:6.0.13`; libjpeg-turbo 3.2.1 plus
+(docker + `emscripten/emsdk`; libjpeg-turbo plus
 `codec/wasm-simd128.patch`, the hand-written WebAssembly SIMD128 kernel set
 from jerbob92/libjpeg-turbo, licence in `worker/lib/LICENSE.libjpeg-turbo.md`).
 The SIMD kernels are bit-identical to libjpeg-turbo's scalar paths and roughly
@@ -111,6 +111,17 @@ denominator (1, 2, 4, 8) so a large photo is decoded straight to the 4 MP
 working size without the full raster ever existing. The encoder is baseline,
 quality 92, no progressive, no Huffman optimisation: the earlier
 mozjpeg/@jsquash build spent ~1.9 s of CPU encoding a 1.5 MP image.
+
+**Codec updates.** libjpeg-turbo and the emsdk image are pinned to exact
+versions (`LJT_TAG`, `EMSDK_IMAGE` in `codec/build.sh`), so builds are
+reproducible. `codec/watch-upstream.sh` runs daily at 10:00 KST on grimoire
+(user timer `censor-codec-watch.timer`, from a dedicated clone at
+`~/.local/share/censor-codec-watch`). When either project has a newer
+release, it bumps the pins on a branch, rebuilds from scratch and runs the
+tests. If everything passes it opens a PR; either way it messages the
+operator on Telegram through Hermes, once per version pair. Merging and
+deploying stay manual. If the SIMD patch stops applying, rebase it onto the
+new tag by hand and regenerate it with `git format-patch`.
 
 **DCT-domain censor** (`codec/censor.cpp`). `jpeg_read_coefficients` loads
 the quantized coefficient arrays, `jpeg_copy_critical_parameters` +
