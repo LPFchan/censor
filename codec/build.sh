@@ -4,19 +4,21 @@
 #
 #   ./codec/build.sh            # on the host: needs docker, clones libjpeg-turbo
 #
-# Run without arguments on the host it fetches libjpeg-turbo 3.2.0 into
+# Run without arguments on the host it fetches libjpeg-turbo 3.2.1 into
 # codec/libjpeg-turbo (git-ignored), applies wasm-simd128.patch (the
 # hand-written WebAssembly SIMD128 kernel set from
 # github.com/jerbob92/libjpeg-turbo, branch wasm-simd128 at 696e2a1, five
-# commits on top of the 3.2.0 tag; output is bit-identical to the scalar C
-# paths), then re-enters itself inside the emscripten/emsdk image, where it
+# commits on top of the 3.2.0 tag, rebased onto 3.2.1 here with only context
+# changes; output is bit-identical to the scalar C paths), then re-enters
+# itself inside the emscripten/emsdk image (pinned; bump both pins by hand
+# when upstream ships a fix), where it
 # builds libjpeg with WITH_WASM_SIMD=1 and links the three entry points against
 # it. Measured under V8 (vitest workerd pool): decode 1.5x and encode 1.6-1.9x
 # faster than the scalar build, same bytes out.
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
-LJT_TAG=3.2.0
-EMSDK_IMAGE=emscripten/emsdk:latest
+LJT_TAG=3.2.1
+EMSDK_IMAGE=emscripten/emsdk:6.0.13
 
 if ! command -v emcc >/dev/null 2>&1; then
   if [ ! -d "$HERE/libjpeg-turbo" ]; then

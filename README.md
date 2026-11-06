@@ -101,7 +101,7 @@ when its response is returned.
 
 **JPEG codec.** `worker/lib/jpeg_{dec,enc,censor}.{js,wasm}` are built from
 `codec/dec.cpp`, `codec/enc.cpp` and `codec/censor.cpp` by `codec/build.sh`
-(docker + `emscripten/emsdk`; libjpeg-turbo 3.2.0 plus
+(docker + `emscripten/emsdk:6.0.13`; libjpeg-turbo 3.2.1 plus
 `codec/wasm-simd128.patch`, the hand-written WebAssembly SIMD128 kernel set
 from jerbob92/libjpeg-turbo, licence in `worker/lib/LICENSE.libjpeg-turbo.md`).
 The SIMD kernels are bit-identical to libjpeg-turbo's scalar paths and roughly
