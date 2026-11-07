@@ -17,7 +17,7 @@
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LJT_TAG=3.2.1
-EMSDK_IMAGE=emscripten/emsdk:6.0.13
+EMSDK_IMAGE=emscripten/emsdk:7.0.0
 
 if ! command -v emcc >/dev/null 2>&1; then
   # The clone and the build dir are reused only while the pins and the patch
